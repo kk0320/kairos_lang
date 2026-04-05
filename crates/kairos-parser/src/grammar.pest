@@ -1,0 +1,66 @@
+WHITESPACE = _{ " " | "\t" | NEWLINE }
+COMMENT = _{ "//" ~ (!NEWLINE ~ ANY)* }
+
+program = { SOI ~ module_decl ~ declaration* ~ EOI }
+declaration = _{ use_decl | context_decl | schema_decl | enum_decl | type_alias | function_decl }
+
+module_decl = { "module" ~ path ~ ";" }
+use_decl = { "use" ~ path ~ ";" }
+context_decl = { "context" ~ "{" ~ context_entry* ~ "}" }
+context_entry = { identifier ~ ":" ~ expression ~ ";" }
+
+schema_decl = { "schema" ~ identifier ~ "{" ~ field_decl* ~ "}" }
+field_decl = { identifier ~ ":" ~ type_ref ~ ","? }
+
+enum_decl = { "enum" ~ identifier ~ "{" ~ identifier ~ ("," ~ identifier)* ~ ","? ~ "}" }
+type_alias = { "type" ~ identifier ~ "=" ~ type_ref ~ ";" }
+
+function_decl = { "fn" ~ identifier ~ "(" ~ param_list? ~ ")" ~ "->" ~ type_ref ~ function_meta* ~ block }
+function_meta = _{ describe_meta | tags_meta | requires_meta | ensures_meta }
+describe_meta = { "describe" ~ string }
+tags_meta = { "tags" ~ list_literal }
+requires_meta = { "requires" ~ list_literal }
+ensures_meta = { "ensures" ~ list_literal }
+
+param_list = { param ~ ("," ~ param)* }
+param = { identifier ~ ":" ~ type_ref }
+
+type_ref = { simple_type ~ "?"? }
+simple_type = { identifier | generic_type }
+generic_type = { identifier ~ "<" ~ type_ref ~ ("," ~ type_ref)* ~ ">" }
+
+block = { "{" ~ statement* ~ "}" }
+statement = _{ let_stmt | return_stmt | if_stmt | expr_stmt }
+let_stmt = { "let" ~ identifier ~ "=" ~ expression ~ ";" }
+return_stmt = { "return" ~ expression ~ ";" }
+if_stmt = { "if" ~ expression ~ block ~ ("else" ~ (block | if_stmt))? }
+expr_stmt = { expression ~ ";" }
+
+expression = { or_expr }
+or_expr = { and_expr ~ ( "||" ~ and_expr )* }
+and_expr = { equality_expr ~ ( "&&" ~ equality_expr )* }
+equality_expr = { comparison_expr ~ ( equality_op ~ comparison_expr )* }
+comparison_expr = { term_expr ~ ( comparison_op ~ term_expr )* }
+term_expr = { factor_expr ~ ( term_op ~ factor_expr )* }
+factor_expr = { primary_expr ~ ( factor_op ~ primary_expr )* }
+
+primary_expr = _{ literal | call_expr | identifier | list_literal | object_literal | "(" ~ expression ~ ")" }
+call_expr = { identifier ~ "(" ~ arg_list? ~ ")" }
+arg_list = { expression ~ ("," ~ expression)* }
+list_literal = { "[" ~ (expression ~ ("," ~ expression)* ~ ","?)? ~ "]" }
+object_literal = { "{" ~ (object_field ~ ("," ~ object_field)* ~ ","?)? ~ "}" }
+object_field = { identifier ~ ":" ~ expression }
+
+literal = _{ string | float | integer | boolean | null }
+equality_op = _{ "==" | "!=" }
+comparison_op = _{ ">=" | ">" | "<=" | "<" }
+term_op = _{ "+" | "-" }
+factor_op = _{ "*" | "/" }
+
+path = { identifier ~ ("." ~ identifier)* }
+identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+string = @{ "\"" ~ ( "\\\"" | "\\\\" | "\\n" | "\\r" | "\\t" | !("\"" | NEWLINE) ~ ANY )* ~ "\"" }
+integer = @{ ASCII_DIGIT+ }
+float = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
+boolean = { "true" | "false" }
+null = { "null" }

@@ -1,0 +1,13 @@
+[package]
+name = "kairos-interpreter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+kairos-ir = { path = "../kairos-ir" }
+serde.workspace = true
+
+[dev-dependencies]
+kairos-parser = { path = "../kairos-parser" }
+kairos-semantic = { path = "../kairos-semantic" }

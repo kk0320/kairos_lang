@@ -1,0 +1,10 @@
+module tests.basic_function;
+
+fn hello() -> Str
+describe "Return hello"
+tags ["test"]
+requires []
+ensures [len(result) > 0]
+{
+  return "hello";
+}

@@ -1,0 +1,74 @@
+program         = module_decl , { declaration } ;
+
+declaration     = use_decl
+                | context_decl
+                | schema_decl
+                | enum_decl
+                | type_alias
+                | function_decl ;
+
+module_decl     = "module" , path , ";" ;
+use_decl        = "use" , path , ";" ;
+
+context_decl    = "context" , "{" , { context_entry } , "}" ;
+context_entry   = identifier , ":" , value , ";" ;
+
+schema_decl     = "schema" , identifier , "{" , { field_decl } , "}" ;
+field_decl      = identifier , ":" , type_ref , "," ;
+
+enum_decl       = "enum" , identifier , "{" , identifier , { "," , identifier } , [ "," ] , "}" ;
+type_alias      = "type" , identifier , "=" , type_ref , ";" ;
+
+function_decl   = "fn" , identifier , "(" , [ param_list ] , ")" , "->" , type_ref ,
+                  { function_meta } ,
+                  block ;
+
+function_meta   = describe_meta | tags_meta | requires_meta | ensures_meta ;
+describe_meta   = "describe" , string ;
+tags_meta       = "tags" , list_literal ;
+requires_meta   = "requires" , list_literal ;
+ensures_meta    = "ensures" , list_literal ;
+
+param_list      = param , { "," , param } ;
+param           = identifier , ":" , type_ref ;
+
+type_ref        = simple_type , [ "?" ] ;
+simple_type     = identifier | generic_type ;
+generic_type    = identifier , "<" , type_ref , { "," , type_ref } , ">" ;
+
+block           = "{" , { statement } , "}" ;
+statement       = let_stmt | return_stmt | if_stmt | expr_stmt ;
+let_stmt        = "let" , identifier , "=" , expression , ";" ;
+return_stmt     = "return" , expression , ";" ;
+if_stmt         = "if" , expression , block , [ "else" , ( block | if_stmt ) ] ;
+expr_stmt       = expression , ";" ;
+
+expression      = literal
+                | identifier
+                | call_expr
+                | list_literal
+                | object_literal
+                | paren_expr
+                | binary_expr ;
+
+call_expr       = identifier , "(" , [ arg_list ] , ")" ;
+arg_list        = expression , { "," , expression } ;
+
+list_literal    = "[" , [ expression , { "," , expression } ] , [ "," ] , "]" ;
+object_literal  = "{" , [ object_field , { "," , object_field } ] , [ "," ] , "}" ;
+object_field    = identifier , ":" , expression ;
+
+paren_expr      = "(" , expression , ")" ;
+binary_expr     = expression , operator , expression ;
+
+value           = expression ;
+literal         = string | integer | float | boolean | null ;
+operator        = "+" | "-" | "*" | "/" | "==" | "!=" | ">" | ">=" | "<" | "<=" | "&&" | "||" ;
+
+path            = identifier , { "." , identifier } ;
+identifier      = letter , { letter | digit | "_" } ;
+string          = "\"" , { character } , "\"" ;
+integer         = digit , { digit } ;
+float           = digit , { digit } , "." , digit , { digit } ;
+boolean         = "true" | "false" ;
+null            = "null" ;

@@ -1,0 +1,525 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Kairos IR",
+  "type": "object",
+  "required": [
+    "module",
+    "imports",
+    "context",
+    "schemas",
+    "enums",
+    "type_aliases",
+    "functions",
+    "source_hash"
+  ],
+  "properties": {
+    "module": {
+      "type": "string"
+    },
+    "imports": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "schemas": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/schema"
+      }
+    },
+    "enums": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/enum"
+      }
+    },
+    "type_aliases": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/type_alias"
+      }
+    },
+    "functions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/function"
+      }
+    },
+    "source_hash": {
+      "type": "string"
+    }
+  },
+  "$defs": {
+    "schema": {
+      "type": "object",
+      "required": [
+        "name",
+        "fields"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/field"
+          }
+        }
+      }
+    },
+    "field": {
+      "type": "object",
+      "required": [
+        "name",
+        "type"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      }
+    },
+    "enum": {
+      "type": "object",
+      "required": [
+        "name",
+        "variants"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "variants": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "type_alias": {
+      "type": "object",
+      "required": [
+        "name",
+        "target"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      }
+    },
+    "function": {
+      "type": "object",
+      "required": [
+        "name",
+        "return_type",
+        "params",
+        "metadata",
+        "body"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "return_type": {
+          "type": "string"
+        },
+        "params": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/param"
+          }
+        },
+        "metadata": {
+          "$ref": "#/$defs/metadata"
+        },
+        "body": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/statement"
+          }
+        }
+      }
+    },
+    "param": {
+      "type": "object",
+      "required": [
+        "name",
+        "type"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "required": [
+        "describe",
+        "tags",
+        "requires",
+        "ensures"
+      ],
+      "properties": {
+        "describe": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "requires": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/expression"
+          }
+        },
+        "ensures": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/expression"
+          }
+        }
+      }
+    },
+    "statement": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "name",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "const": "let"
+            },
+            "name": {
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/expression"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "const": "return"
+            },
+            "value": {
+              "$ref": "#/$defs/expression"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "condition",
+            "then_branch"
+          ],
+          "properties": {
+            "kind": {
+              "const": "if"
+            },
+            "condition": {
+              "$ref": "#/$defs/expression"
+            },
+            "then_branch": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/statement"
+              }
+            },
+            "else_branch": {
+              "$ref": "#/$defs/else_branch"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "expression"
+          ],
+          "properties": {
+            "kind": {
+              "const": "expr"
+            },
+            "expression": {
+              "$ref": "#/$defs/expression"
+            }
+          }
+        }
+      ]
+    },
+    "else_branch": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "statements"
+          ],
+          "properties": {
+            "kind": {
+              "const": "block"
+            },
+            "statements": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/statement"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "statement"
+          ],
+          "properties": {
+            "kind": {
+              "const": "if"
+            },
+            "statement": {
+              "$ref": "#/$defs/statement"
+            }
+          }
+        }
+      ]
+    },
+    "expression": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "const": "literal"
+            },
+            "value": {
+              "$ref": "#/$defs/literal"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "name"
+          ],
+          "properties": {
+            "kind": {
+              "const": "identifier"
+            },
+            "name": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "callee",
+            "args"
+          ],
+          "properties": {
+            "kind": {
+              "const": "call"
+            },
+            "callee": {
+              "type": "string"
+            },
+            "args": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/expression"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "items"
+          ],
+          "properties": {
+            "kind": {
+              "const": "list"
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/expression"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "fields"
+          ],
+          "properties": {
+            "kind": {
+              "const": "object"
+            },
+            "fields": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/object_field"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "operator",
+            "left",
+            "right"
+          ],
+          "properties": {
+            "kind": {
+              "const": "binary"
+            },
+            "operator": {
+              "type": "string"
+            },
+            "left": {
+              "$ref": "#/$defs/expression"
+            },
+            "right": {
+              "$ref": "#/$defs/expression"
+            }
+          }
+        }
+      ]
+    },
+    "object_field": {
+      "type": "object",
+      "required": [
+        "name",
+        "value"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/expression"
+        }
+      }
+    },
+    "literal": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "const": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "const": "integer"
+            },
+            "value": {
+              "type": "integer"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "const": "float"
+            },
+            "value": {
+              "type": "number"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "const": "boolean"
+            },
+            "value": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "null"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,15 @@
+[package]
+name = "kairos-ir"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+kairos-semantic = { path = "../kairos-semantic" }
+kairos-ast = { path = "../kairos-ast" }
+sha2 = "0.10"
+
+[dev-dependencies]
+kairos-parser = { path = "../kairos-parser" }

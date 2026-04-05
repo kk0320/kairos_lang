@@ -1,0 +1,42 @@
+module demo.video_context;
+
+context {
+  goal: "Turn a technical video into a reusable system-context prompt";
+  audience: "LLM";
+  domain: "programming-languages";
+  assumptions: [
+    "The source explains how custom programming languages are built.",
+    "The output must preserve compiler pipeline knowledge.",
+    "The output should be reusable as downstream system context.",
+  ];
+}
+
+schema CompileStage {
+  name: Str,
+  purpose: Str,
+}
+
+enum ExecutionMode {
+  Compiler,
+  Interpreter,
+  JIT,
+  Transpiler,
+}
+
+fn stage_count() -> Int
+describe "Return the number of canonical compilation stages described in the source"
+tags ["compiler", "video", "context"]
+requires []
+ensures [result > 0]
+{
+  return 5;
+}
+
+fn summary_line() -> Str
+describe "Return a short summary line for downstream AI context"
+tags ["summary", "compiler", "llm"]
+requires []
+ensures [len(result) > 0]
+{
+  return "Compiler pipeline knowledge captured for downstream AI use.";
+}

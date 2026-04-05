@@ -1,0 +1,25 @@
+module demo.risk_rules;
+
+context {
+  goal: "Show deterministic rule execution";
+  audience: "LLM";
+  domain: "rules-engine";
+  assumptions: [
+    "Score is pre-normalized between 0 and 100.",
+  ];
+}
+
+fn classify(score: Int) -> Str
+describe "Classify a normalized score into a label"
+tags ["rules", "demo"]
+requires [score >= 0, score <= 100]
+ensures [len(result) > 0]
+{
+  if score >= 80 {
+    return "HIGH";
+  } else if score >= 50 {
+    return "MEDIUM";
+  } else {
+    return "LOW";
+  }
+}

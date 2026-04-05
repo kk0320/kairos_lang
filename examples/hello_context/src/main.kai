@@ -1,0 +1,19 @@
+module demo.hello_context;
+
+context {
+  goal: "Provide the smallest valid Kairos example";
+  audience: "LLM";
+  domain: "demo";
+  assumptions: [
+    "This file is used for smoke testing.",
+  ];
+}
+
+fn hello() -> Str
+describe "Return a static greeting"
+tags ["demo", "hello"]
+requires []
+ensures [len(result) > 0]
+{
+  return "Hello from Kairos";
+}

@@ -1,0 +1,25 @@
+[package]
+name = "kairos-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "kairos"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+kairos-ast = { path = "../kairos-ast" }
+kairos-parser = { path = "../kairos-parser" }
+kairos-semantic = { path = "../kairos-semantic" }
+kairos-ir = { path = "../kairos-ir" }
+kairos-interpreter = { path = "../kairos-interpreter" }
+kairos-formatter = { path = "../kairos-formatter" }
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
