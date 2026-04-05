@@ -1,0 +1,22 @@
+module demo.assistant_briefing;
+use demo.assistant_briefing.briefing;
+use demo.assistant_briefing.policies;
+
+context {
+  goal: "Assemble reusable AI system context from multiple Kairos modules";
+  audience: "LLM";
+  domain: "assistant-briefing";
+  assumptions: [
+    "Prompt generation must stay deterministic.",
+    "Project imports should remain explicit and reviewable.",
+  ];
+}
+
+fn main() -> Str
+describe "Combine briefing and policy guidance into one stable output line"
+tags ["ai", "context", "multifile"]
+requires []
+ensures [len(result) > 0]
+{
+  return concat(briefing_line(), policy_line());
+}

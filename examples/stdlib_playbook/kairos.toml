@@ -1,0 +1,7 @@
+[package]
+name = "stdlib_playbook"
+version = "0.2.0"
+entry = "src/main.kai"
+
+[build]
+emit = ["ast", "ir", "prompt"]

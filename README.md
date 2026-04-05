@@ -8,46 +8,83 @@ Kairos is intentionally AI-first. The language is designed so source code stays 
 
 ## Current status
 
-The repository now includes a working single-file Kairos pipeline:
+Kairos v0.2 is a working, reviewable foundation for small AI-first projects:
 
 - lexer and recursive-descent parser for `.kai`
-- canonical AST in Rust with stable JSON export
-- semantic analysis with duplicate-definition checks, scope validation, undefined identifier detection, basic type checks, and metadata validation
-- KIR lowering with stable JSON output and SHA-256 source hashes
-- deterministic prompt export for LLM context pipelines
-- canonical formatter for the supported syntax
-- minimal interpreter for the deterministic subset, including `requires` and `ensures` checks
-- CLI integration tests against bundled examples
+- canonical AST with stable JSON export
+- project loading via `kairos.toml`
+- deterministic multi-file module resolution with `use`
+- semantic analysis with structured diagnostics
+- KIR lowering for modules and whole projects
+- deterministic prompt export for downstream LLM workflows
+- canonical formatter for files and project roots
+- deterministic interpreter with contract checks
+- CLI integration tests against bundled examples and project fixtures
 
-## Supported CLI
+## Quick start
 
 The workspace builds a CLI binary named `kairos`.
 
 ```powershell
-cargo run --bin kairos -- check examples\hello_context\src\main.kai
-cargo run --bin kairos -- ast examples\hello_context\src\main.kai --json
-cargo run --bin kairos -- ir examples\video_context\src\main.kai --json
-cargo run --bin kairos -- prompt examples\video_context\src\main.kai
-cargo run --bin kairos -- fmt examples\hello_context\src\main.kai --check
-cargo run --bin kairos -- run examples\risk_rules\src\main.kai --function classify --arg 72 --json
+cargo build --workspace
+cargo test --workspace
+
+cargo run --bin kairos -- check examples\assistant_briefing
+cargo run --bin kairos -- check examples\hello_context\src\main.kai --json
+cargo run --bin kairos -- ast examples\assistant_briefing --json
+cargo run --bin kairos -- ir examples\decision_bundle --json
+cargo run --bin kairos -- prompt examples\assistant_briefing
+cargo run --bin kairos -- fmt examples\assistant_briefing --check
+cargo run --bin kairos -- run examples\decision_bundle --function classify --arg 72 --json
+cargo run --bin kairos -- run examples\stdlib_playbook --json
 ```
 
-CLI behavior:
+## Project model
 
-- `kairos check <file> [--json]` parses and validates a file
-- `kairos ast <file> --json` prints AST JSON
-- `kairos ir <file> --json` prints KIR JSON
-- `kairos prompt <file>` prints deterministic markdown for LLM/system-context use
-- `kairos fmt <file>` rewrites the file in canonical style
-- `kairos fmt <file> --check` fails if formatting changes would be applied
-- `kairos fmt <file> --stdout` prints formatted source instead of rewriting
-- `kairos run <file> [--function <name>] [--arg <value> ...] [--json]` runs the interpreter subset
+Kairos projects are rooted by `kairos.toml`.
 
-If `run` is called without `--function`, Kairos executes `main()` when present, otherwise all zero-argument functions in declaration order. Files with only parameterized functions require `--function`.
+```toml
+[package]
+name = "assistant_briefing"
+version = "0.2.0"
+entry = "src/main.kai"
+
+[build]
+emit = ["ast", "ir", "prompt"]
+```
+
+Current v0.2 rules:
+
+- the entry file must point to a `.kai` source file
+- the parent directory of the entry file is treated as the project source root
+- every `.kai` file under that source root is loaded deterministically
+- modules are resolved by `module` declaration and imported with `use demo.shared.text;`
+- duplicate module names, unresolved imports, and import cycles are hard errors
+
+Imported functions and types are brought into scope by module name. Kairos v0.2 does not yet have selective imports or explicit visibility keywords.
+
+## Supported CLI
+
+Kairos supports these primary flows:
+
+- `kairos check <file-or-project> [--json]`
+- `kairos fmt <file-or-project> [--check] [--stdout]`
+- `kairos ast <file-or-project> --json`
+- `kairos ir <file-or-project> --json`
+- `kairos prompt <file-or-project>`
+- `kairos run <file-or-project> [--function <name>] [--arg <value> ...] [--json]`
+
+Key behavior:
+
+- `check`, `ir`, `prompt`, and `run` are project-aware when the input is a project root or a file inside a project
+- `ast` prints file AST for a file input and project AST for a project input
+- `fmt` formats one file or every discovered module in a project
+- `run` executes `main()` when available, otherwise all zero-argument functions in the selected module, unless `--function` is provided
+- project runs also accept `module.path::function_name` for explicit cross-module entry selection
 
 ## Supported language subset
 
-The implemented subset matches the published single-file MVP direction:
+The current implementation supports:
 
 - `module` and `use`
 - `context { ... }`
@@ -55,44 +92,37 @@ The implemented subset matches the published single-file MVP direction:
 - `fn` declarations with `describe`, `tags`, `requires`, and `ensures`
 - literals, identifiers, calls, lists, objects, and binary expressions
 - `let`, `return`, `if`, and `else if`
-- builtin runtime helpers: `len`, `concat`, `abs`, `min`, `max`
+- project-aware imports across multiple `.kai` files
+
+The practical deterministic stdlib in v0.2 includes:
+
+- string helpers: `len`, `concat`, `contains`, `starts_with`, `ends_with`, `trim`, `upper`, `lower`
+- list helpers: `join`, `first`, `last`, `all`, `any`
+- object helpers: `has_key`, `get_str`, `get_int`, `keys`
+- numeric helpers: `abs`, `min`, `max`, `clamp`
 
 Semantic validation currently enforces:
 
-- duplicate type, function, field, variant, and local binding detection
+- duplicate type, function, field, variant, module, and local binding detection
 - duplicate parameter and context-key detection
-- undefined identifiers and unknown function calls
+- unresolved identifiers, functions, modules, and imports
+- import ambiguity for conflicting imported names
 - type existence checks for declared types
 - boolean contract checks for `requires` and `ensures`
+- malformed context values
 - return-type checks and full-path return validation
-- string-only `tags`
-- constant-only `context` values
+- stable diagnostic payloads with `code`, `severity`, `message`, `location`, and related notes
 
-Unknown `context` keys are currently accepted with warnings so the repo stays practical without inventing undocumented syntax for custom keys.
+Unknown `context` keys are still accepted with warnings so custom metadata remains practical without inventing undocumented syntax.
 
-## Example
+## Example projects
 
-```kai
-module demo.hello_context;
-
-context {
-  goal: "Provide the smallest valid Kairos example";
-  audience: "LLM";
-  domain: "demo";
-  assumptions: [
-    "This file is used for smoke testing.",
-  ];
-}
-
-fn hello() -> Str
-describe "Return a static greeting"
-tags ["demo", "hello"]
-requires []
-ensures [len(result) > 0]
-{
-  return "Hello from Kairos";
-}
-```
+- `examples/hello_context`: smallest single-module smoke test
+- `examples/video_context`: type declarations and prompt export
+- `examples/risk_rules`: deterministic single-file rule execution
+- `examples/assistant_briefing`: multi-file AI-context project
+- `examples/decision_bundle`: multi-file rules/decision engine project
+- `examples/stdlib_playbook`: multi-file stdlib demonstration
 
 ## Build and validation
 
@@ -100,6 +130,7 @@ ensures [len(result) > 0]
 cargo build --workspace
 cargo test --workspace
 cargo fmt --all
+cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
@@ -111,6 +142,7 @@ These commands pass in the current repository state.
 crates/
   kairos-ast
   kairos-parser
+  kairos-project
   kairos-semantic
   kairos-ir
   kairos-interpreter
@@ -126,11 +158,21 @@ tests/
 
 Kairos is still intentionally narrow in this phase:
 
-- single-file modules only
-- no package resolution or multi-file compilation
+- source discovery is limited to one project source root per manifest
+- no selective imports, visibility modifiers, or package registry
 - no mutation-heavy execution model
-- no networking, filesystem access, subprocesses, randomness, or wall-clock APIs
-- no LLVM backend, LSP, or editor plugin in this repository phase
+- no networking, filesystem access, subprocesses, randomness, or wall-clock APIs for user programs
+- no advanced type inference, macros, async runtime, LLVM backend, or editor protocol layer yet
+- semantic diagnostics include file/module/symbol context and parse spans, but not full rich AST spans for every semantic error yet
+
+## Documentation
+
+- [ARCHITECTURE.md](ARCHITECTURE.md)
+- [ROADMAP.md](ROADMAP.md)
+- [docs/cli.md](docs/cli.md)
+- [docs/language-overview.md](docs/language-overview.md)
+- [docs/syntax.md](docs/syntax.md)
+- [docs/projects.md](docs/projects.md)
 
 ## License
 

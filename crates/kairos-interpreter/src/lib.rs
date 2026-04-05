@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, error::Error, fmt};
 
 use kairos_ir::{
     format_kir_expression, KirElseBranch, KirExpression, KirFunction, KirLiteral, KirProgram,
-    KirStatement,
+    KirProject, KirStatement,
 };
 use serde::{Deserialize, Serialize};
 
@@ -101,9 +101,63 @@ pub fn run(
     Ok(ExecutionReport { module: program.module.clone(), results })
 }
 
+pub fn run_project(
+    project: &KirProject,
+    default_module: &str,
+    function: Option<&str>,
+    args: &[RuntimeValue],
+) -> Result<ExecutionReport> {
+    let interpreter = ProjectInterpreter::new(project)?;
+
+    let results = if let Some(function_name) = function {
+        let (module_name, local_name) = split_qualified_function(function_name, default_module);
+        vec![ExecutionResult {
+            function: function_name.to_string(),
+            value: interpreter.call_in_module(module_name, local_name, args.to_vec())?,
+        }]
+    } else if let Some(main) = interpreter
+        .find_function(default_module, "main")
+        .filter(|function| function.params.is_empty())
+    {
+        vec![ExecutionResult {
+            function: "main".to_string(),
+            value: interpreter.call_in_module(default_module, &main.name, Vec::new())?,
+        }]
+    } else {
+        let zero_arg_functions = interpreter
+            .module_functions(default_module)?
+            .iter()
+            .filter(|(_, function)| function.params.is_empty())
+            .map(|(name, _)| (*name).to_string())
+            .collect::<Vec<_>>();
+
+        if zero_arg_functions.is_empty() {
+            return Err(InterpreterError::new(
+                "no zero-argument functions are available in the entry module; pass `--function` and arguments",
+            ));
+        }
+
+        let mut results = Vec::new();
+        for function_name in zero_arg_functions {
+            results.push(ExecutionResult {
+                function: function_name.clone(),
+                value: interpreter.call_in_module(default_module, &function_name, Vec::new())?,
+            });
+        }
+        results
+    };
+
+    Ok(ExecutionReport { module: default_module.to_string(), results })
+}
+
 struct Interpreter<'a> {
     program: &'a KirProgram,
     functions: BTreeMap<&'a str, &'a KirFunction>,
+}
+
+struct ProjectInterpreter<'a> {
+    modules: BTreeMap<&'a str, &'a KirProgram>,
+    functions: BTreeMap<(&'a str, &'a str), &'a KirFunction>,
 }
 
 impl<'a> Interpreter<'a> {
@@ -289,38 +343,274 @@ impl<'a> Interpreter<'a> {
     }
 
     fn evaluate_call(&self, callee: &str, args: Vec<RuntimeValue>) -> Result<RuntimeValue> {
-        match callee {
-            "len" => match args.as_slice() {
-                [RuntimeValue::String(value)] => {
-                    Ok(RuntimeValue::Integer(value.chars().count() as i64))
+        if let Some(value) = evaluate_builtin(callee, &args)? {
+            Ok(value)
+        } else {
+            self.call(callee, args)
+        }
+    }
+}
+
+impl<'a> ProjectInterpreter<'a> {
+    fn new(project: &'a KirProject) -> Result<Self> {
+        let mut modules = BTreeMap::new();
+        let mut functions = BTreeMap::new();
+
+        for module in &project.modules {
+            if modules.insert(module.module.as_str(), module).is_some() {
+                return Err(InterpreterError::new(format!(
+                    "duplicate module `{}` in runtime project",
+                    module.module
+                )));
+            }
+
+            for function in &module.functions {
+                if functions
+                    .insert((module.module.as_str(), function.name.as_str()), function)
+                    .is_some()
+                {
+                    return Err(InterpreterError::new(format!(
+                        "duplicate function `{}` in module `{}`",
+                        function.name, module.module
+                    )));
                 }
-                [RuntimeValue::List(items)] => Ok(RuntimeValue::Integer(items.len() as i64)),
-                [_] => Err(InterpreterError::new("`len` expects a string or list")),
-                _ => Err(InterpreterError::new("`len` expects exactly one argument")),
-            },
-            "concat" => match args.as_slice() {
-                [RuntimeValue::String(left), RuntimeValue::String(right)] => {
-                    Ok(RuntimeValue::String(format!("{left}{right}")))
+            }
+        }
+
+        Ok(Self { modules, functions })
+    }
+
+    fn module_functions(&self, module: &str) -> Result<Vec<(&'a str, &'a KirFunction)>> {
+        let program = self
+            .modules
+            .get(module)
+            .copied()
+            .ok_or_else(|| InterpreterError::new(format!("unknown module `{module}`")))?;
+        Ok(program.functions.iter().map(|function| (function.name.as_str(), function)).collect())
+    }
+
+    fn find_function(&self, module: &str, function: &str) -> Option<&'a KirFunction> {
+        self.functions.get(&(module, function)).copied()
+    }
+
+    fn call_in_module(
+        &self,
+        module: &str,
+        name: &str,
+        args: Vec<RuntimeValue>,
+    ) -> Result<RuntimeValue> {
+        let function = self
+            .find_function(module, name)
+            .ok_or_else(|| InterpreterError::new(format!("unknown function `{module}::{name}`")))?;
+
+        if function.params.len() != args.len() {
+            return Err(InterpreterError::new(format!(
+                "function `{module}::{name}` expects {} arguments but received {}",
+                function.params.len(),
+                args.len()
+            )));
+        }
+
+        let mut env = BTreeMap::new();
+        for (param, value) in function.params.iter().zip(args) {
+            env.insert(param.name.clone(), value);
+        }
+
+        for require in &function.metadata.requires {
+            match self.evaluate_expression_in_module(module, require, &mut env.clone())? {
+                RuntimeValue::Boolean(true) => {}
+                RuntimeValue::Boolean(false) => {
+                    return Err(InterpreterError::new(format!(
+                        "precondition failed for `{module}::{name}`: {}",
+                        format_kir_expression(require)
+                    )))
                 }
-                _ => Err(InterpreterError::new("`concat` expects two strings")),
-            },
-            "abs" => match args.as_slice() {
-                [RuntimeValue::Integer(value)] => Ok(RuntimeValue::Integer(value.abs())),
-                _ => Err(InterpreterError::new("`abs` expects one integer")),
-            },
-            "min" => match args.as_slice() {
-                [RuntimeValue::Integer(left), RuntimeValue::Integer(right)] => {
-                    Ok(RuntimeValue::Integer((*left).min(*right)))
+                _ => {
+                    return Err(InterpreterError::new(format!(
+                        "precondition for `{module}::{name}` did not evaluate to Bool"
+                    )))
                 }
-                _ => Err(InterpreterError::new("`min` expects two integers")),
-            },
-            "max" => match args.as_slice() {
-                [RuntimeValue::Integer(left), RuntimeValue::Integer(right)] => {
-                    Ok(RuntimeValue::Integer((*left).max(*right)))
+            }
+        }
+
+        let result =
+            self.execute_block_in_module(module, &function.body, &mut env)?.ok_or_else(|| {
+                InterpreterError::new(format!(
+                    "function `{module}::{name}` completed without returning a value"
+                ))
+            })?;
+
+        let mut ensure_env = env;
+        ensure_env.insert("result".to_string(), result.clone());
+        for ensure in &function.metadata.ensures {
+            match self.evaluate_expression_in_module(module, ensure, &mut ensure_env.clone())? {
+                RuntimeValue::Boolean(true) => {}
+                RuntimeValue::Boolean(false) => {
+                    return Err(InterpreterError::new(format!(
+                        "postcondition failed for `{module}::{name}`: {}",
+                        format_kir_expression(ensure)
+                    )))
                 }
-                _ => Err(InterpreterError::new("`max` expects two integers")),
-            },
-            _ => self.call(callee, args),
+                _ => {
+                    return Err(InterpreterError::new(format!(
+                        "postcondition for `{module}::{name}` did not evaluate to Bool"
+                    )))
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn execute_block_in_module(
+        &self,
+        module: &str,
+        statements: &[KirStatement],
+        env: &mut BTreeMap<String, RuntimeValue>,
+    ) -> Result<Option<RuntimeValue>> {
+        for statement in statements {
+            if let Some(value) = self.execute_statement_in_module(module, statement, env)? {
+                return Ok(Some(value));
+            }
+        }
+        Ok(None)
+    }
+
+    fn execute_statement_in_module(
+        &self,
+        module: &str,
+        statement: &KirStatement,
+        env: &mut BTreeMap<String, RuntimeValue>,
+    ) -> Result<Option<RuntimeValue>> {
+        match statement {
+            KirStatement::Let { name, value } => {
+                let value = self.evaluate_expression_in_module(module, value, env)?;
+                env.insert(name.clone(), value);
+                Ok(None)
+            }
+            KirStatement::Return { value } => {
+                let value = self.evaluate_expression_in_module(module, value, env)?;
+                Ok(Some(value))
+            }
+            KirStatement::Expr { expression } => {
+                self.evaluate_expression_in_module(module, expression, env)?;
+                Ok(None)
+            }
+            KirStatement::If { condition, then_branch, else_branch } => {
+                let condition = self.evaluate_expression_in_module(module, condition, env)?;
+                match condition {
+                    RuntimeValue::Boolean(true) => {
+                        self.execute_branch_in_module(module, then_branch, env)
+                    }
+                    RuntimeValue::Boolean(false) => match else_branch {
+                        Some(KirElseBranch::Block { statements }) => {
+                            self.execute_branch_in_module(module, statements, env)
+                        }
+                        Some(KirElseBranch::If { statement }) => {
+                            self.execute_statement_in_module(module, statement, env)
+                        }
+                        None => Ok(None),
+                    },
+                    _ => Err(InterpreterError::new("if condition did not evaluate to Bool")),
+                }
+            }
+        }
+    }
+
+    fn execute_branch_in_module(
+        &self,
+        module: &str,
+        statements: &[KirStatement],
+        env: &BTreeMap<String, RuntimeValue>,
+    ) -> Result<Option<RuntimeValue>> {
+        let mut branch_env = env.clone();
+        self.execute_block_in_module(module, statements, &mut branch_env)
+    }
+
+    fn evaluate_expression_in_module(
+        &self,
+        module: &str,
+        expression: &KirExpression,
+        env: &mut BTreeMap<String, RuntimeValue>,
+    ) -> Result<RuntimeValue> {
+        match expression {
+            KirExpression::Literal { value } => Ok(match value {
+                KirLiteral::String(value) => RuntimeValue::String(value.clone()),
+                KirLiteral::Integer(value) => RuntimeValue::Integer(*value),
+                KirLiteral::Float(value) => RuntimeValue::Float(*value),
+                KirLiteral::Boolean(value) => RuntimeValue::Boolean(*value),
+                KirLiteral::Null => RuntimeValue::Null,
+            }),
+            KirExpression::Identifier { name } => env
+                .get(name)
+                .cloned()
+                .ok_or_else(|| InterpreterError::new(format!("unknown identifier `{name}`"))),
+            KirExpression::Call { callee, args } => {
+                let values = args
+                    .iter()
+                    .map(|arg| self.evaluate_expression_in_module(module, arg, env))
+                    .collect::<Result<Vec<_>>>()?;
+                self.evaluate_call_in_module(module, callee, values)
+            }
+            KirExpression::List { items } => Ok(RuntimeValue::List(
+                items
+                    .iter()
+                    .map(|item| self.evaluate_expression_in_module(module, item, env))
+                    .collect::<Result<Vec<_>>>()?,
+            )),
+            KirExpression::Object { fields } => {
+                let mut object = BTreeMap::new();
+                for field in fields {
+                    object.insert(
+                        field.name.clone(),
+                        self.evaluate_expression_in_module(module, &field.value, env)?,
+                    );
+                }
+                Ok(RuntimeValue::Object(object))
+            }
+            KirExpression::Binary { operator, left, right } => {
+                let left = self.evaluate_expression_in_module(module, left, env)?;
+                let right = self.evaluate_expression_in_module(module, right, env)?;
+                evaluate_binary(*operator, left, right)
+            }
+        }
+    }
+
+    fn evaluate_call_in_module(
+        &self,
+        module: &str,
+        callee: &str,
+        args: Vec<RuntimeValue>,
+    ) -> Result<RuntimeValue> {
+        if let Some(value) = evaluate_builtin(callee, &args)? {
+            return Ok(value);
+        }
+
+        if self.find_function(module, callee).is_some() {
+            return self.call_in_module(module, callee, args);
+        }
+
+        let module_program = self
+            .modules
+            .get(module)
+            .copied()
+            .ok_or_else(|| InterpreterError::new(format!("unknown module `{module}`")))?;
+
+        let imported_matches = module_program
+            .imports
+            .iter()
+            .filter(|imported_module| self.find_function(imported_module, callee).is_some())
+            .cloned()
+            .collect::<Vec<_>>();
+
+        match imported_matches.as_slice() {
+            [imported_module] => self.call_in_module(imported_module, callee, args),
+            [] => Err(InterpreterError::new(format!(
+                "unknown function `{callee}` in module `{module}`"
+            ))),
+            _ => Err(InterpreterError::new(format!(
+                "ambiguous imported function `{callee}` in module `{module}`"
+            ))),
         }
     }
 }
@@ -346,6 +636,177 @@ fn evaluate_binary(
         Operator::And => bool_op(left, right, |a, b| a && b),
         Operator::Or => bool_op(left, right, |a, b| a || b),
     }
+}
+
+fn split_qualified_function<'a>(function: &'a str, default_module: &'a str) -> (&'a str, &'a str) {
+    if let Some((module, name)) = function.rsplit_once("::") {
+        (module, name)
+    } else {
+        (default_module, function)
+    }
+}
+
+fn evaluate_builtin(callee: &str, args: &[RuntimeValue]) -> Result<Option<RuntimeValue>> {
+    let value = match callee {
+        "len" => match args {
+            [RuntimeValue::String(value)] => RuntimeValue::Integer(value.chars().count() as i64),
+            [RuntimeValue::List(items)] => RuntimeValue::Integer(items.len() as i64),
+            [_] => return Err(InterpreterError::new("`len` expects a string or list")),
+            _ => return Err(InterpreterError::new("`len` expects exactly one argument")),
+        },
+        "concat" => match args {
+            [RuntimeValue::String(left), RuntimeValue::String(right)] => {
+                RuntimeValue::String(format!("{left}{right}"))
+            }
+            _ => return Err(InterpreterError::new("`concat` expects two strings")),
+        },
+        "abs" => match args {
+            [RuntimeValue::Integer(value)] => RuntimeValue::Integer(value.abs()),
+            _ => return Err(InterpreterError::new("`abs` expects one integer")),
+        },
+        "min" => match args {
+            [RuntimeValue::Integer(left), RuntimeValue::Integer(right)] => {
+                RuntimeValue::Integer((*left).min(*right))
+            }
+            _ => return Err(InterpreterError::new("`min` expects two integers")),
+        },
+        "max" => match args {
+            [RuntimeValue::Integer(left), RuntimeValue::Integer(right)] => {
+                RuntimeValue::Integer((*left).max(*right))
+            }
+            _ => return Err(InterpreterError::new("`max` expects two integers")),
+        },
+        "contains" => match args {
+            [RuntimeValue::String(value), RuntimeValue::String(needle)] => {
+                RuntimeValue::Boolean(value.contains(needle))
+            }
+            [RuntimeValue::List(items), needle] => RuntimeValue::Boolean(items.contains(needle)),
+            [RuntimeValue::Object(object), RuntimeValue::String(key)] => {
+                RuntimeValue::Boolean(object.contains_key(key))
+            }
+            _ => {
+                return Err(InterpreterError::new(
+                    "`contains` expects (Str, Str), (List, Any), or (Object, Str)",
+                ))
+            }
+        },
+        "starts_with" => match args {
+            [RuntimeValue::String(value), RuntimeValue::String(prefix)] => {
+                RuntimeValue::Boolean(value.starts_with(prefix))
+            }
+            _ => return Err(InterpreterError::new("`starts_with` expects two strings")),
+        },
+        "ends_with" => match args {
+            [RuntimeValue::String(value), RuntimeValue::String(suffix)] => {
+                RuntimeValue::Boolean(value.ends_with(suffix))
+            }
+            _ => return Err(InterpreterError::new("`ends_with` expects two strings")),
+        },
+        "trim" => match args {
+            [RuntimeValue::String(value)] => RuntimeValue::String(value.trim().to_string()),
+            _ => return Err(InterpreterError::new("`trim` expects one string")),
+        },
+        "upper" => match args {
+            [RuntimeValue::String(value)] => RuntimeValue::String(value.to_uppercase()),
+            _ => return Err(InterpreterError::new("`upper` expects one string")),
+        },
+        "lower" => match args {
+            [RuntimeValue::String(value)] => RuntimeValue::String(value.to_lowercase()),
+            _ => return Err(InterpreterError::new("`lower` expects one string")),
+        },
+        "join" => match args {
+            [RuntimeValue::List(items), RuntimeValue::String(separator)] => {
+                let mut rendered = Vec::with_capacity(items.len());
+                for item in items {
+                    let RuntimeValue::String(value) = item else {
+                        return Err(InterpreterError::new("`join` expects List<Str> and Str"));
+                    };
+                    rendered.push(value.clone());
+                }
+                RuntimeValue::String(rendered.join(separator))
+            }
+            _ => return Err(InterpreterError::new("`join` expects List<Str> and Str")),
+        },
+        "first" => match args {
+            [RuntimeValue::List(items)] => items.first().cloned().unwrap_or(RuntimeValue::Null),
+            _ => return Err(InterpreterError::new("`first` expects one list")),
+        },
+        "last" => match args {
+            [RuntimeValue::List(items)] => items.last().cloned().unwrap_or(RuntimeValue::Null),
+            _ => return Err(InterpreterError::new("`last` expects one list")),
+        },
+        "all" => match args {
+            [RuntimeValue::List(items)] => {
+                let mut result = true;
+                for item in items {
+                    let RuntimeValue::Boolean(value) = item else {
+                        return Err(InterpreterError::new("`all` expects List<Bool>"));
+                    };
+                    result &= *value;
+                }
+                RuntimeValue::Boolean(result)
+            }
+            _ => return Err(InterpreterError::new("`all` expects one list")),
+        },
+        "any" => match args {
+            [RuntimeValue::List(items)] => {
+                let mut result = false;
+                for item in items {
+                    let RuntimeValue::Boolean(value) = item else {
+                        return Err(InterpreterError::new("`any` expects List<Bool>"));
+                    };
+                    result |= *value;
+                }
+                RuntimeValue::Boolean(result)
+            }
+            _ => return Err(InterpreterError::new("`any` expects one list")),
+        },
+        "has_key" => match args {
+            [RuntimeValue::Object(object), RuntimeValue::String(key)] => {
+                RuntimeValue::Boolean(object.contains_key(key))
+            }
+            _ => return Err(InterpreterError::new("`has_key` expects Object and Str")),
+        },
+        "get_str" => match args {
+            [RuntimeValue::Object(object), RuntimeValue::String(key)] => match object.get(key) {
+                Some(RuntimeValue::String(value)) => RuntimeValue::String(value.clone()),
+                Some(_) => {
+                    return Err(InterpreterError::new(
+                        "`get_str` found a non-string value for the requested key",
+                    ))
+                }
+                None => RuntimeValue::Null,
+            },
+            _ => return Err(InterpreterError::new("`get_str` expects Object and Str")),
+        },
+        "get_int" => match args {
+            [RuntimeValue::Object(object), RuntimeValue::String(key)] => match object.get(key) {
+                Some(RuntimeValue::Integer(value)) => RuntimeValue::Integer(*value),
+                Some(_) => {
+                    return Err(InterpreterError::new(
+                        "`get_int` found a non-integer value for the requested key",
+                    ))
+                }
+                None => RuntimeValue::Null,
+            },
+            _ => return Err(InterpreterError::new("`get_int` expects Object and Str")),
+        },
+        "keys" => match args {
+            [RuntimeValue::Object(object)] => RuntimeValue::List(
+                object.keys().map(|key| RuntimeValue::String(key.clone())).collect(),
+            ),
+            _ => return Err(InterpreterError::new("`keys` expects one object")),
+        },
+        "clamp" => match args {
+            [RuntimeValue::Integer(value), RuntimeValue::Integer(minimum), RuntimeValue::Integer(maximum)] => {
+                RuntimeValue::Integer((*value).clamp(*minimum, *maximum))
+            }
+            _ => return Err(InterpreterError::new("`clamp` expects three integers")),
+        },
+        _ => return Ok(None),
+    };
+
+    Ok(Some(value))
 }
 
 fn numeric_op(
@@ -397,11 +858,18 @@ fn bool_op(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use kairos_ir::lower;
     use kairos_parser::parse_source;
+    use kairos_project::{analyze_project, load_project};
     use kairos_semantic::analyze;
 
-    use super::{run, RuntimeValue};
+    use super::{run, run_project, RuntimeValue};
+
+    fn fixture(path: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../").join(path)
+    }
 
     #[test]
     fn runs_zero_arg_example_functions() {
@@ -435,5 +903,22 @@ mod tests {
             .expect_err("precondition should fail");
 
         assert!(error.to_string().contains("precondition failed"));
+    }
+
+    #[test]
+    fn runs_multifile_project_entry() {
+        let project =
+            load_project(&fixture("examples/decision_bundle")).expect("project should load");
+        let analyzed = analyze_project(&project).expect("project should analyze");
+        let report = run_project(
+            &kairos_ir::lower_project(&analyzed),
+            &analyzed.project.entry_module,
+            Some("classify"),
+            &[RuntimeValue::Integer(72)],
+        )
+        .expect("project function should run");
+
+        assert_eq!(report.module, "demo.decision_bundle");
+        assert_eq!(report.results[0].value, RuntimeValue::String("MEDIUM".to_string()));
     }
 }

@@ -15,6 +15,7 @@ serde_json.workspace = true
 kairos-ast = { path = "../kairos-ast" }
 kairos-parser = { path = "../kairos-parser" }
 kairos-semantic = { path = "../kairos-semantic" }
+kairos-project = { path = "../kairos-project" }
 kairos-ir = { path = "../kairos-ir" }
 kairos-interpreter = { path = "../kairos-interpreter" }
 kairos-formatter = { path = "../kairos-formatter" }

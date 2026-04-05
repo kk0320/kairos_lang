@@ -1,14 +1,16 @@
 [package]
-name = "kairos-interpreter"
+name = "kairos-project"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-kairos-ir = { path = "../kairos-ir" }
 serde.workspace = true
+toml.workspace = true
+walkdir.workspace = true
+kairos-ast = { path = "../kairos-ast" }
+kairos-parser = { path = "../kairos-parser" }
+kairos-semantic = { path = "../kairos-semantic" }
 
 [dev-dependencies]
-kairos-parser = { path = "../kairos-parser" }
-kairos-project = { path = "../kairos-project" }
-kairos-semantic = { path = "../kairos-semantic" }
+tempfile = "3"

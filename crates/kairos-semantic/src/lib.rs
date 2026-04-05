@@ -6,31 +6,78 @@ use std::{
 
 use kairos_ast::{
     format_expression, BinaryOperator, Block, ElseBranch, EnumDecl, Expression, FieldDecl,
-    FunctionDecl, Literal, Program, SchemaDecl, Statement, TypeAliasDecl, TypeRef,
+    FunctionDecl, Literal, Param, Program, SchemaDecl, Statement, TypeAliasDecl, TypeRef,
 };
+use serde::{Deserialize, Serialize};
 
 pub type Result<T> = std::result::Result<T, SemanticError>;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Severity {
     Warning,
     Error,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiagnosticLocation {
+    pub path: Option<String>,
+    pub module: Option<String>,
+    pub symbol: Option<String>,
+    pub line: Option<usize>,
+    pub column: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelatedDiagnostic {
+    pub message: String,
+    pub location: Option<DiagnosticLocation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Diagnostic {
     pub severity: Severity,
     pub code: &'static str,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub location: Option<DiagnosticLocation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub related: Vec<RelatedDiagnostic>,
 }
 
 impl Diagnostic {
-    fn warning(code: &'static str, message: impl Into<String>) -> Self {
-        Self { severity: Severity::Warning, code, message: message.into() }
+    pub fn warning(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            severity: Severity::Warning,
+            code,
+            message: message.into(),
+            location: None,
+            related: Vec::new(),
+        }
     }
 
-    fn error(code: &'static str, message: impl Into<String>) -> Self {
-        Self { severity: Severity::Error, code, message: message.into() }
+    pub fn error(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            severity: Severity::Error,
+            code,
+            message: message.into(),
+            location: None,
+            related: Vec::new(),
+        }
+    }
+
+    pub fn with_location(mut self, location: DiagnosticLocation) -> Self {
+        self.location = Some(location);
+        self
+    }
+
+    pub fn with_related(
+        mut self,
+        message: impl Into<String>,
+        location: Option<DiagnosticLocation>,
+    ) -> Self {
+        self.related.push(RelatedDiagnostic { message: message.into(), location });
+        self
     }
 }
 
@@ -52,6 +99,9 @@ impl fmt::Display for SemanticError {
                 writeln!(f)?;
             }
             write!(f, "[{}] {}", diagnostic.code, diagnostic.message)?;
+            if let Some(location) = &diagnostic.location {
+                write!(f, " ({})", format_diagnostic_location(location))?;
+            }
         }
         Ok(())
     }
@@ -59,23 +109,74 @@ impl fmt::Display for SemanticError {
 
 impl Error for SemanticError {}
 
+#[derive(Debug, Clone)]
+pub enum ImportedTypeKind {
+    Schema,
+    Enum,
+    Alias(TypeRef),
+}
+
+#[derive(Debug, Clone)]
+pub struct ImportedType {
+    pub name: String,
+    pub module: String,
+    pub kind: ImportedTypeKind,
+}
+
+#[derive(Debug, Clone)]
+pub struct ImportedFunction {
+    pub name: String,
+    pub module: String,
+    pub params: Vec<Param>,
+    pub return_type: TypeRef,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AnalysisContext {
+    pub file_path: Option<String>,
+    pub module: Option<String>,
+    pub imported_types: Vec<ImportedType>,
+    pub imported_functions: Vec<ImportedFunction>,
+}
+
 pub fn analyze(program: Program) -> Result<AnalyzedProgram> {
+    let module = program.module.clone();
+    analyze_with_context(
+        program,
+        &AnalysisContext { module: Some(module), ..AnalysisContext::default() },
+    )
+}
+
+pub fn analyze_with_context(
+    program: Program,
+    context: &AnalysisContext,
+) -> Result<AnalyzedProgram> {
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
+    let default_location = default_location_for(context, None);
 
     if program.module.trim().is_empty() {
-        errors
-            .push(Diagnostic::error("missing_module", "Kairos source must declare a module path"));
+        errors.push(
+            Diagnostic::error("missing_module", "Kairos source must declare a module path")
+                .with_location(default_location.clone()),
+        );
     }
 
-    validate_context(&program, &mut errors, &mut warnings);
+    validate_context(&program, context, &mut errors, &mut warnings);
 
-    let type_index = build_type_index(&program, &mut errors);
-    validate_declared_types(&program, &type_index, &mut errors);
-    let function_index = build_function_index(&program, &type_index, &mut errors);
+    let type_index = build_type_index(&program, context, &mut errors);
+    validate_declared_types(&program, context, &type_index, &mut errors);
+    let function_index = build_function_index(&program, context, &type_index, &mut errors);
 
     for function in &program.functions {
-        validate_function(function, &function_index, &type_index, &mut errors, &mut warnings);
+        validate_function(
+            function,
+            context,
+            &function_index,
+            &type_index,
+            &mut errors,
+            &mut warnings,
+        );
     }
 
     if errors.is_empty() {
@@ -163,8 +264,36 @@ impl ScopeStack {
     }
 }
 
+fn default_location_for(context: &AnalysisContext, symbol: Option<String>) -> DiagnosticLocation {
+    DiagnosticLocation {
+        path: context.file_path.clone(),
+        module: context.module.clone(),
+        symbol,
+        line: None,
+        column: None,
+    }
+}
+
+fn format_diagnostic_location(location: &DiagnosticLocation) -> String {
+    let mut parts = Vec::new();
+    if let Some(path) = &location.path {
+        parts.push(path.clone());
+    }
+    if let Some(module) = &location.module {
+        parts.push(format!("module {module}"));
+    }
+    if let Some(symbol) = &location.symbol {
+        parts.push(format!("symbol {symbol}"));
+    }
+    if let (Some(line), Some(column)) = (location.line, location.column) {
+        parts.push(format!("line {line}, column {column}"));
+    }
+    parts.join(", ")
+}
+
 fn validate_context(
     program: &Program,
+    analysis_context: &AnalysisContext,
     errors: &mut Vec<Diagnostic>,
     warnings: &mut Vec<Diagnostic>,
 ) {
@@ -182,56 +311,83 @@ fn validate_context(
 
     for entry in &context.entries {
         if !seen.insert(entry.key.clone()) {
-            errors.push(Diagnostic::error(
-                "duplicate_context_key",
-                format!("context key `{}` is declared more than once", entry.key),
-            ));
+            errors.push(
+                Diagnostic::error(
+                    "duplicate_context_key",
+                    format!("context key `{}` is declared more than once", entry.key),
+                )
+                .with_location(default_location_for(analysis_context, Some(entry.key.clone()))),
+            );
         }
 
         if !is_constant_expression(&entry.value) {
-            errors.push(Diagnostic::error(
-                "non_constant_context_value",
-                format!(
-                    "context key `{}` must use a literal, list, or object literal value",
-                    entry.key
-                ),
-            ));
+            errors.push(
+                Diagnostic::error(
+                    "non_constant_context_value",
+                    format!(
+                        "context key `{}` must use a literal, list, or object literal value",
+                        entry.key
+                    ),
+                )
+                .with_location(default_location_for(analysis_context, Some(entry.key.clone()))),
+            );
         }
 
         if !known_keys.contains(&entry.key) {
-            warnings.push(Diagnostic::warning(
-                "custom_context_key",
-                format!(
-                    "context key `{}` is not part of the core key set and will be treated as custom metadata",
-                    entry.key
-                ),
-            ));
+            warnings.push(
+                Diagnostic::warning(
+                    "custom_context_key",
+                    format!(
+                        "context key `{}` is not part of the core key set and will be treated as custom metadata",
+                        entry.key
+                    ),
+                )
+                .with_location(default_location_for(analysis_context, Some(entry.key.clone()))),
+            );
         }
 
         match entry.key.as_str() {
             "goal" | "audience" | "domain" => {
                 if !matches!(entry.value, Expression::Literal { value: Literal::String(_) }) {
-                    errors.push(Diagnostic::error(
-                        "invalid_context_value",
-                        format!("context key `{}` must be a string literal", entry.key),
-                    ));
+                    errors.push(
+                        Diagnostic::error(
+                            "invalid_context_value",
+                            format!("context key `{}` must be a string literal", entry.key),
+                        )
+                        .with_location(default_location_for(
+                            analysis_context,
+                            Some(entry.key.clone()),
+                        )),
+                    );
                 }
             }
             "assumptions" => {
                 let Expression::List { items } = &entry.value else {
-                    errors.push(Diagnostic::error(
-                        "invalid_context_value",
-                        "context key `assumptions` must be a list of string literals",
-                    ));
+                    errors.push(
+                        Diagnostic::error(
+                            "invalid_context_value",
+                            "context key `assumptions` must be a list of string literals",
+                        )
+                        .with_location(default_location_for(
+                            analysis_context,
+                            Some(entry.key.clone()),
+                        )),
+                    );
                     continue;
                 };
 
                 for item in items {
                     if !matches!(item, Expression::Literal { value: Literal::String(_) }) {
-                        errors.push(Diagnostic::error(
-                            "invalid_context_value",
-                            "context key `assumptions` must contain only string literals",
-                        ));
+                        errors.push(
+                            Diagnostic::error(
+                                "invalid_context_value",
+                                "context key `assumptions` must contain only string literals",
+                            )
+                            .with_location(default_location_for(
+                                analysis_context,
+                                Some(entry.key.clone()),
+                            )),
+                        );
                     }
                 }
             }
@@ -242,18 +398,31 @@ fn validate_context(
 
 fn build_type_index(
     program: &Program,
+    context: &AnalysisContext,
     errors: &mut Vec<Diagnostic>,
 ) -> BTreeMap<String, TypeDefinition> {
     let mut index = BTreeMap::new();
 
     for schema in &program.schemas {
-        insert_type_definition(&mut index, &schema.name, TypeDefinition::Schema, errors);
-        validate_schema_shape(schema, errors);
+        insert_type_definition(
+            &mut index,
+            &schema.name,
+            TypeDefinition::Schema,
+            errors,
+            default_location_for(context, Some(schema.name.clone())),
+        );
+        validate_schema_shape(schema, context, errors);
     }
 
     for enum_decl in &program.enums {
-        insert_type_definition(&mut index, &enum_decl.name, TypeDefinition::Enum, errors);
-        validate_enum_shape(enum_decl, errors);
+        insert_type_definition(
+            &mut index,
+            &enum_decl.name,
+            TypeDefinition::Enum,
+            errors,
+            default_location_for(context, Some(enum_decl.name.clone())),
+        );
+        validate_enum_shape(enum_decl, context, errors);
     }
 
     for type_alias in &program.type_aliases {
@@ -262,7 +431,50 @@ fn build_type_index(
             &type_alias.name,
             TypeDefinition::Alias(type_alias.target.clone()),
             errors,
+            default_location_for(context, Some(type_alias.name.clone())),
         );
+    }
+
+    for imported_type in &context.imported_types {
+        let definition = match &imported_type.kind {
+            ImportedTypeKind::Schema => TypeDefinition::Schema,
+            ImportedTypeKind::Enum => TypeDefinition::Enum,
+            ImportedTypeKind::Alias(target) => TypeDefinition::Alias(target.clone()),
+        };
+        let imported_location = DiagnosticLocation {
+            path: context.file_path.clone(),
+            module: Some(imported_type.module.clone()),
+            symbol: Some(imported_type.name.clone()),
+            line: None,
+            column: None,
+        };
+        if is_builtin_type_name(&imported_type.name) {
+            errors.push(
+                Diagnostic::error(
+                    "reserved_type_name",
+                    format!("`{}` is a reserved builtin type name", imported_type.name),
+                )
+                .with_location(imported_location),
+            );
+            continue;
+        }
+        if let Some(previous) = index.insert(imported_type.name.clone(), definition) {
+            let _ = previous;
+            errors.push(
+                Diagnostic::error(
+                    "duplicate_imported_type",
+                    format!(
+                        "module imports create an ambiguous type name `{}`",
+                        imported_type.name
+                    ),
+                )
+                .with_location(default_location_for(context, Some(imported_type.name.clone())))
+                .with_related(
+                    format!("also imported from module `{}`", imported_type.module),
+                    Some(imported_location),
+                ),
+            );
+        }
     }
 
     index
@@ -273,78 +485,110 @@ fn insert_type_definition(
     name: &str,
     definition: TypeDefinition,
     errors: &mut Vec<Diagnostic>,
+    location: DiagnosticLocation,
 ) {
     if is_builtin_type_name(name) {
-        errors.push(Diagnostic::error(
-            "reserved_type_name",
-            format!("`{name}` is a reserved builtin type name"),
-        ));
+        errors.push(
+            Diagnostic::error(
+                "reserved_type_name",
+                format!("`{name}` is a reserved builtin type name"),
+            )
+            .with_location(location),
+        );
         return;
     }
 
     if index.insert(name.to_string(), definition).is_some() {
-        errors.push(Diagnostic::error(
-            "duplicate_type_definition",
-            format!("type `{name}` is declared more than once"),
-        ));
+        errors.push(
+            Diagnostic::error(
+                "duplicate_type_definition",
+                format!("type `{name}` is declared more than once"),
+            )
+            .with_location(location),
+        );
     }
 }
 
-fn validate_schema_shape(schema: &SchemaDecl, errors: &mut Vec<Diagnostic>) {
+fn validate_schema_shape(
+    schema: &SchemaDecl,
+    context: &AnalysisContext,
+    errors: &mut Vec<Diagnostic>,
+) {
     let mut field_names = BTreeSet::new();
     for FieldDecl { name, .. } in &schema.fields {
         if !field_names.insert(name.clone()) {
-            errors.push(Diagnostic::error(
-                "duplicate_schema_field",
-                format!("schema `{}` declares field `{name}` more than once", schema.name),
-            ));
+            errors.push(
+                Diagnostic::error(
+                    "duplicate_schema_field",
+                    format!("schema `{}` declares field `{name}` more than once", schema.name),
+                )
+                .with_location(default_location_for(context, Some(schema.name.clone()))),
+            );
         }
     }
 }
 
-fn validate_enum_shape(enum_decl: &EnumDecl, errors: &mut Vec<Diagnostic>) {
+fn validate_enum_shape(
+    enum_decl: &EnumDecl,
+    context: &AnalysisContext,
+    errors: &mut Vec<Diagnostic>,
+) {
     let mut variants = BTreeSet::new();
     for variant in &enum_decl.variants {
         if !variants.insert(variant.clone()) {
-            errors.push(Diagnostic::error(
-                "duplicate_enum_variant",
-                format!("enum `{}` declares variant `{variant}` more than once", enum_decl.name),
-            ));
+            errors.push(
+                Diagnostic::error(
+                    "duplicate_enum_variant",
+                    format!(
+                        "enum `{}` declares variant `{variant}` more than once",
+                        enum_decl.name
+                    ),
+                )
+                .with_location(default_location_for(context, Some(enum_decl.name.clone()))),
+            );
         }
     }
 }
 
 fn validate_declared_types(
     program: &Program,
+    context: &AnalysisContext,
     type_index: &BTreeMap<String, TypeDefinition>,
     errors: &mut Vec<Diagnostic>,
 ) {
     for schema in &program.schemas {
         for field in &schema.fields {
             if let Err(message) = resolve_type_ref(&field.ty, type_index, &mut BTreeSet::new()) {
-                errors.push(Diagnostic::error(
-                    "unknown_type",
-                    format!(
-                        "schema `{}` field `{}` uses an unknown type: {message}",
-                        schema.name, field.name
-                    ),
-                ));
+                errors.push(
+                    Diagnostic::error(
+                        "unknown_type",
+                        format!(
+                            "schema `{}` field `{}` uses an unknown type: {message}",
+                            schema.name, field.name
+                        ),
+                    )
+                    .with_location(default_location_for(context, Some(schema.name.clone()))),
+                );
             }
         }
     }
 
     for TypeAliasDecl { name, target } in &program.type_aliases {
         if let Err(message) = resolve_type_ref(target, type_index, &mut BTreeSet::new()) {
-            errors.push(Diagnostic::error(
-                "unknown_type",
-                format!("type alias `{name}` targets an unknown type: {message}"),
-            ));
+            errors.push(
+                Diagnostic::error(
+                    "unknown_type",
+                    format!("type alias `{name}` targets an unknown type: {message}"),
+                )
+                .with_location(default_location_for(context, Some(name.clone()))),
+            );
         }
     }
 }
 
 fn build_function_index(
     program: &Program,
+    context: &AnalysisContext,
     type_index: &BTreeMap<String, TypeDefinition>,
     errors: &mut Vec<Diagnostic>,
 ) -> BTreeMap<String, FunctionSignature> {
@@ -355,32 +599,41 @@ fn build_function_index(
         let mut params = Vec::new();
         for param in &function.params {
             if !seen_params.insert(param.name.clone()) {
-                errors.push(Diagnostic::error(
-                    "duplicate_parameter",
-                    format!(
-                        "function `{}` declares parameter `{}` more than once",
-                        function.name, param.name
-                    ),
-                ));
+                errors.push(
+                    Diagnostic::error(
+                        "duplicate_parameter",
+                        format!(
+                            "function `{}` declares parameter `{}` more than once",
+                            function.name, param.name
+                        ),
+                    )
+                    .with_location(default_location_for(context, Some(function.name.clone()))),
+                );
             }
             if param.name == "result" {
-                errors.push(Diagnostic::error(
-                    "reserved_binding",
-                    format!(
-                        "function `{}` cannot use reserved parameter name `result`",
-                        function.name
-                    ),
-                ));
+                errors.push(
+                    Diagnostic::error(
+                        "reserved_binding",
+                        format!(
+                            "function `{}` cannot use reserved parameter name `result`",
+                            function.name
+                        ),
+                    )
+                    .with_location(default_location_for(context, Some(function.name.clone()))),
+                );
             }
             match resolve_type_ref(&param.ty, type_index, &mut BTreeSet::new()) {
                 Ok(ty) => params.push(ty),
-                Err(message) => errors.push(Diagnostic::error(
-                    "unknown_type",
-                    format!(
-                        "function `{}` parameter `{}` uses an unknown type: {message}",
-                        function.name, param.name
-                    ),
-                )),
+                Err(message) => errors.push(
+                    Diagnostic::error(
+                        "unknown_type",
+                        format!(
+                            "function `{}` parameter `{}` uses an unknown type: {message}",
+                            function.name, param.name
+                        ),
+                    )
+                    .with_location(default_location_for(context, Some(function.name.clone()))),
+                ),
             }
         }
 
@@ -388,13 +641,16 @@ fn build_function_index(
             match resolve_type_ref(&function.return_type, type_index, &mut BTreeSet::new()) {
                 Ok(ty) => ty,
                 Err(message) => {
-                    errors.push(Diagnostic::error(
-                        "unknown_type",
-                        format!(
-                            "function `{}` has an unknown return type: {message}",
-                            function.name
-                        ),
-                    ));
+                    errors.push(
+                        Diagnostic::error(
+                            "unknown_type",
+                            format!(
+                                "function `{}` has an unknown return type: {message}",
+                                function.name
+                            ),
+                        )
+                        .with_location(default_location_for(context, Some(function.name.clone()))),
+                    );
                     ValueType::Any
                 }
             };
@@ -403,10 +659,50 @@ fn build_function_index(
             .insert(function.name.clone(), FunctionSignature { params, return_type })
             .is_some()
         {
-            errors.push(Diagnostic::error(
-                "duplicate_function",
-                format!("function `{}` is declared more than once", function.name),
-            ));
+            errors.push(
+                Diagnostic::error(
+                    "duplicate_function",
+                    format!("function `{}` is declared more than once", function.name),
+                )
+                .with_location(default_location_for(context, Some(function.name.clone()))),
+            );
+        }
+    }
+
+    for imported_function in &context.imported_functions {
+        let params = imported_function
+            .params
+            .iter()
+            .filter_map(|param| resolve_type_ref(&param.ty, type_index, &mut BTreeSet::new()).ok())
+            .collect::<Vec<_>>();
+        let return_type =
+            resolve_type_ref(&imported_function.return_type, type_index, &mut BTreeSet::new())
+                .unwrap_or(ValueType::Any);
+
+        if functions
+            .insert(imported_function.name.clone(), FunctionSignature { params, return_type })
+            .is_some()
+        {
+            errors.push(
+                Diagnostic::error(
+                    "duplicate_imported_function",
+                    format!(
+                        "module imports create an ambiguous function name `{}`",
+                        imported_function.name
+                    ),
+                )
+                .with_location(default_location_for(context, Some(imported_function.name.clone())))
+                .with_related(
+                    format!("also imported from module `{}`", imported_function.module),
+                    Some(DiagnosticLocation {
+                        path: context.file_path.clone(),
+                        module: Some(imported_function.module.clone()),
+                        symbol: Some(imported_function.name.clone()),
+                        line: None,
+                        column: None,
+                    }),
+                ),
+            );
         }
     }
 
@@ -415,6 +711,7 @@ fn build_function_index(
 
 fn validate_function(
     function: &FunctionDecl,
+    context: &AnalysisContext,
     functions: &BTreeMap<String, FunctionSignature>,
     type_index: &BTreeMap<String, TypeDefinition>,
     errors: &mut Vec<Diagnostic>,
@@ -425,10 +722,13 @@ fn validate_function(
     };
 
     if function.metadata.describe.as_deref().is_none_or(|value| value.trim().is_empty()) {
-        errors.push(Diagnostic::error(
-            "missing_describe",
-            format!("function `{}` must declare `describe` metadata", function.name),
-        ));
+        errors.push(
+            Diagnostic::error(
+                "missing_describe",
+                format!("function `{}` must declare `describe` metadata", function.name),
+            )
+            .with_location(default_location_for(context, Some(function.name.clone()))),
+        );
     }
 
     let mut tag_values = BTreeSet::new();
@@ -436,16 +736,22 @@ fn validate_function(
         match tag {
             Expression::Literal { value: Literal::String(value) } => {
                 if !tag_values.insert(value.clone()) {
-                    warnings.push(Diagnostic::warning(
-                        "duplicate_tag",
-                        format!("function `{}` repeats tag `{value}`", function.name),
-                    ));
+                    warnings.push(
+                        Diagnostic::warning(
+                            "duplicate_tag",
+                            format!("function `{}` repeats tag `{value}`", function.name),
+                        )
+                        .with_location(default_location_for(context, Some(function.name.clone()))),
+                    );
                 }
             }
-            _ => errors.push(Diagnostic::error(
-                "invalid_tag",
-                format!("function `{}` tags must be string literals", function.name),
-            )),
+            _ => errors.push(
+                Diagnostic::error(
+                    "invalid_tag",
+                    format!("function `{}` tags must be string literals", function.name),
+                )
+                .with_location(default_location_for(context, Some(function.name.clone()))),
+            ),
         }
     }
 
@@ -458,6 +764,7 @@ fn validate_function(
         validate_boolean_expression(
             require,
             &scope,
+            context,
             functions,
             type_index,
             errors,
@@ -472,6 +779,7 @@ fn validate_function(
         validate_boolean_expression(
             ensure,
             &ensure_scope,
+            context,
             functions,
             type_index,
             errors,
@@ -485,6 +793,7 @@ fn validate_function(
         &function.body,
         &mut body_scope,
         &signature.return_type,
+        context,
         functions,
         type_index,
         errors,
@@ -492,34 +801,49 @@ fn validate_function(
     );
 
     if !guarantees_return {
-        errors.push(Diagnostic::error(
-            "missing_return",
-            format!(
-                "function `{}` does not return a value on every control-flow path",
-                function.name
-            ),
-        ));
+        errors.push(
+            Diagnostic::error(
+                "missing_return",
+                format!(
+                    "function `{}` does not return a value on every control-flow path",
+                    function.name
+                ),
+            )
+            .with_location(default_location_for(context, Some(function.name.clone()))),
+        );
     }
 }
 
 fn validate_boolean_expression(
     expression: &Expression,
     scope: &ScopeStack,
+    context: &AnalysisContext,
     functions: &BTreeMap<String, FunctionSignature>,
     type_index: &BTreeMap<String, TypeDefinition>,
     errors: &mut Vec<Diagnostic>,
     function_name: &str,
     label: &str,
 ) {
-    let ty = infer_expression_type(expression, scope, functions, type_index, errors, function_name);
+    let ty = infer_expression_type(
+        expression,
+        scope,
+        context,
+        functions,
+        type_index,
+        errors,
+        function_name,
+    );
     if !type_matches(&ty, &ValueType::Bool) {
-        errors.push(Diagnostic::error(
-            "invalid_contract_expression",
-            format!(
-                "function `{function_name}` `{label}` expression `{}` must evaluate to Bool, found {ty}",
-                format_expression(expression)
-            ),
-        ));
+        errors.push(
+            Diagnostic::error(
+                "invalid_contract_expression",
+                format!(
+                    "function `{function_name}` `{label}` expression `{}` must evaluate to Bool, found {ty}",
+                    format_expression(expression)
+                ),
+            )
+            .with_location(default_location_for(context, Some(function_name.to_string()))),
+        );
     }
 }
 
@@ -527,6 +851,7 @@ fn validate_block(
     block: &Block,
     scope: &mut ScopeStack,
     expected_return_type: &ValueType,
+    context: &AnalysisContext,
     functions: &BTreeMap<String, FunctionSignature>,
     type_index: &BTreeMap<String, TypeDefinition>,
     errors: &mut Vec<Diagnostic>,
@@ -540,6 +865,7 @@ fn validate_block(
             statement,
             scope,
             expected_return_type,
+            context,
             functions,
             type_index,
             errors,
@@ -560,6 +886,7 @@ fn validate_statement(
     statement: &Statement,
     scope: &mut ScopeStack,
     expected_return_type: &ValueType,
+    context: &AnalysisContext,
     functions: &BTreeMap<String, FunctionSignature>,
     type_index: &BTreeMap<String, TypeDefinition>,
     errors: &mut Vec<Diagnostic>,
@@ -568,37 +895,60 @@ fn validate_statement(
     match statement {
         Statement::Let { name, value } => {
             if name == "result" {
-                errors.push(Diagnostic::error(
-                    "reserved_binding",
-                    format!("function `{function_name}` cannot bind reserved name `result`"),
-                ));
+                errors.push(
+                    Diagnostic::error(
+                        "reserved_binding",
+                        format!("function `{function_name}` cannot bind reserved name `result`"),
+                    )
+                    .with_location(default_location_for(context, Some(function_name.to_string()))),
+                );
                 return false;
             }
 
             if scope.contains(name) {
-                errors.push(Diagnostic::error(
-                    "duplicate_binding",
-                    format!("function `{function_name}` redeclares local binding `{name}`"),
-                ));
+                errors.push(
+                    Diagnostic::error(
+                        "duplicate_binding",
+                        format!("function `{function_name}` redeclares local binding `{name}`"),
+                    )
+                    .with_location(default_location_for(context, Some(function_name.to_string()))),
+                );
                 return false;
             }
 
-            let ty =
-                infer_expression_type(value, scope, functions, type_index, errors, function_name);
+            let ty = infer_expression_type(
+                value,
+                scope,
+                context,
+                functions,
+                type_index,
+                errors,
+                function_name,
+            );
             scope.declare(name, ty);
             false
         }
         Statement::Return { value } => {
-            let actual =
-                infer_expression_type(value, scope, functions, type_index, errors, function_name);
+            let actual = infer_expression_type(
+                value,
+                scope,
+                context,
+                functions,
+                type_index,
+                errors,
+                function_name,
+            );
             if !type_matches(&actual, expected_return_type) {
-                errors.push(Diagnostic::error(
-                    "return_type_mismatch",
-                    format!(
-                        "function `{function_name}` returns `{}` but expected {expected_return_type}",
-                        format_expression(value)
-                    ),
-                ));
+                errors.push(
+                    Diagnostic::error(
+                        "return_type_mismatch",
+                        format!(
+                            "function `{function_name}` returns `{}` but expected {expected_return_type}",
+                            format_expression(value)
+                        ),
+                    )
+                    .with_location(default_location_for(context, Some(function_name.to_string()))),
+                );
             }
             true
         }
@@ -606,19 +956,23 @@ fn validate_statement(
             let condition = infer_expression_type(
                 &if_statement.condition,
                 scope,
+                context,
                 functions,
                 type_index,
                 errors,
                 function_name,
             );
             if !type_matches(&condition, &ValueType::Bool) {
-                errors.push(Diagnostic::error(
-                    "invalid_condition",
-                    format!(
-                        "function `{function_name}` uses non-boolean if condition `{}`",
-                        format_expression(&if_statement.condition)
-                    ),
-                ));
+                errors.push(
+                    Diagnostic::error(
+                        "invalid_condition",
+                        format!(
+                            "function `{function_name}` uses non-boolean if condition `{}`",
+                            format_expression(&if_statement.condition)
+                        ),
+                    )
+                    .with_location(default_location_for(context, Some(function_name.to_string()))),
+                );
             }
 
             let mut then_scope = scope.clone();
@@ -626,6 +980,7 @@ fn validate_statement(
                 &if_statement.then_branch,
                 &mut then_scope,
                 expected_return_type,
+                context,
                 functions,
                 type_index,
                 errors,
@@ -639,6 +994,7 @@ fn validate_statement(
                         block,
                         &mut else_scope,
                         expected_return_type,
+                        context,
                         functions,
                         type_index,
                         errors,
@@ -651,6 +1007,7 @@ fn validate_statement(
                         &Statement::If((**nested).clone()),
                         &mut else_scope,
                         expected_return_type,
+                        context,
                         functions,
                         type_index,
                         errors,
@@ -663,7 +1020,15 @@ fn validate_statement(
             then_returns && else_returns
         }
         Statement::Expr { expression } => {
-            infer_expression_type(expression, scope, functions, type_index, errors, function_name);
+            infer_expression_type(
+                expression,
+                scope,
+                context,
+                functions,
+                type_index,
+                errors,
+                function_name,
+            );
             false
         }
     }
@@ -672,6 +1037,7 @@ fn validate_statement(
 fn infer_expression_type(
     expression: &Expression,
     scope: &ScopeStack,
+    context: &AnalysisContext,
     functions: &BTreeMap<String, FunctionSignature>,
     type_index: &BTreeMap<String, TypeDefinition>,
     errors: &mut Vec<Diagnostic>,
@@ -686,30 +1052,50 @@ fn infer_expression_type(
             Literal::Null => ValueType::Null,
         },
         Expression::Identifier { name } => scope.lookup(name).cloned().unwrap_or_else(|| {
-            errors.push(Diagnostic::error(
-                "undefined_identifier",
-                format!("function `{function_name}` references undefined identifier `{name}`"),
-            ));
+            errors.push(
+                Diagnostic::error(
+                    "undefined_identifier",
+                    format!("function `{function_name}` references undefined identifier `{name}`"),
+                )
+                .with_location(default_location_for(context, Some(function_name.to_string()))),
+            );
             ValueType::Any
         }),
-        Expression::Call { callee, args } => {
-            infer_call_type(callee, args, scope, functions, type_index, errors, function_name)
-        }
+        Expression::Call { callee, args } => infer_call_type(
+            callee,
+            args,
+            scope,
+            context,
+            functions,
+            type_index,
+            errors,
+            function_name,
+        ),
         Expression::List { items } => {
-            infer_list_type(items, scope, functions, type_index, errors, function_name)
+            infer_list_type(items, scope, context, functions, type_index, errors, function_name)
         }
         Expression::Object { fields } => {
             let mut seen = BTreeSet::new();
             for field in fields {
                 if !seen.insert(field.name.clone()) {
-                    errors.push(Diagnostic::error(
-                        "duplicate_object_field",
-                        format!("function `{function_name}` repeats object field `{}`", field.name),
-                    ));
+                    errors.push(
+                        Diagnostic::error(
+                            "duplicate_object_field",
+                            format!(
+                                "function `{function_name}` repeats object field `{}`",
+                                field.name
+                            ),
+                        )
+                        .with_location(default_location_for(
+                            context,
+                            Some(function_name.to_string()),
+                        )),
+                    );
                 }
                 infer_expression_type(
                     &field.value,
                     scope,
+                    context,
                     functions,
                     type_index,
                     errors,
@@ -719,11 +1105,33 @@ fn infer_expression_type(
             ValueType::Object
         }
         Expression::Binary { operator, left, right } => {
-            let left_ty =
-                infer_expression_type(left, scope, functions, type_index, errors, function_name);
-            let right_ty =
-                infer_expression_type(right, scope, functions, type_index, errors, function_name);
-            infer_binary_type(*operator, &left_ty, &right_ty, errors, function_name, expression)
+            let left_ty = infer_expression_type(
+                left,
+                scope,
+                context,
+                functions,
+                type_index,
+                errors,
+                function_name,
+            );
+            let right_ty = infer_expression_type(
+                right,
+                scope,
+                context,
+                functions,
+                type_index,
+                errors,
+                function_name,
+            );
+            infer_binary_type(
+                *operator,
+                &left_ty,
+                &right_ty,
+                context,
+                errors,
+                function_name,
+                expression,
+            )
         }
     }
 }
@@ -732,6 +1140,7 @@ fn infer_call_type(
     callee: &str,
     args: &[Expression],
     scope: &ScopeStack,
+    context: &AnalysisContext,
     functions: &BTreeMap<String, FunctionSignature>,
     type_index: &BTreeMap<String, TypeDefinition>,
     errors: &mut Vec<Diagnostic>,
@@ -739,42 +1148,55 @@ fn infer_call_type(
 ) -> ValueType {
     let argument_types: Vec<ValueType> = args
         .iter()
-        .map(|arg| infer_expression_type(arg, scope, functions, type_index, errors, function_name))
+        .map(|arg| {
+            infer_expression_type(arg, scope, context, functions, type_index, errors, function_name)
+        })
         .collect();
 
-    if let Some(ty) = infer_builtin_call_type(callee, &argument_types, errors, function_name) {
+    if let Some(ty) =
+        infer_builtin_call_type(callee, &argument_types, context, errors, function_name)
+    {
         return ty;
     }
 
     let Some(signature) = functions.get(callee) else {
-        errors.push(Diagnostic::error(
-            "undefined_function",
-            format!("function `{function_name}` calls unknown function `{callee}`"),
-        ));
+        errors.push(
+            Diagnostic::error(
+                "undefined_function",
+                format!("function `{function_name}` calls unknown function `{callee}`"),
+            )
+            .with_location(default_location_for(context, Some(function_name.to_string()))),
+        );
         return ValueType::Any;
     };
 
     if signature.params.len() != argument_types.len() {
-        errors.push(Diagnostic::error(
-            "invalid_argument_count",
-            format!(
-                "function `{function_name}` calls `{callee}` with {} arguments but expected {}",
-                argument_types.len(),
-                signature.params.len()
-            ),
-        ));
+        errors.push(
+            Diagnostic::error(
+                "invalid_argument_count",
+                format!(
+                    "function `{function_name}` calls `{callee}` with {} arguments but expected {}",
+                    argument_types.len(),
+                    signature.params.len()
+                ),
+            )
+            .with_location(default_location_for(context, Some(function_name.to_string()))),
+        );
         return signature.return_type.clone();
     }
 
     for (index, (actual, expected)) in argument_types.iter().zip(&signature.params).enumerate() {
         if !type_matches(actual, expected) {
-            errors.push(Diagnostic::error(
-                "argument_type_mismatch",
-                format!(
-                    "function `{function_name}` passes argument {} to `{callee}` as {actual}, expected {expected}",
-                    index + 1
-                ),
-            ));
+            errors.push(
+                Diagnostic::error(
+                    "argument_type_mismatch",
+                    format!(
+                        "function `{function_name}` passes argument {} to `{callee}` as {actual}, expected {expected}",
+                        index + 1
+                    ),
+                )
+                .with_location(default_location_for(context, Some(function_name.to_string()))),
+            );
         }
     }
 
@@ -784,27 +1206,34 @@ fn infer_call_type(
 fn infer_builtin_call_type(
     callee: &str,
     argument_types: &[ValueType],
+    context: &AnalysisContext,
     errors: &mut Vec<Diagnostic>,
     function_name: &str,
 ) -> Option<ValueType> {
     match callee {
         "len" => {
             if argument_types.len() != 1 {
-                errors.push(Diagnostic::error(
-                    "invalid_argument_count",
-                    format!(
-                        "function `{function_name}` calls `len` with {} arguments but expected 1",
-                        argument_types.len()
-                    ),
-                ));
+                errors.push(
+                    Diagnostic::error(
+                        "invalid_argument_count",
+                        format!(
+                            "function `{function_name}` calls `len` with {} arguments but expected 1",
+                            argument_types.len()
+                        ),
+                    )
+                    .with_location(default_location_for(context, Some(function_name.to_string()))),
+                );
             } else if !matches!(argument_types[0], ValueType::Str | ValueType::List(_)) {
-                errors.push(Diagnostic::error(
-                    "argument_type_mismatch",
-                    format!(
-                        "function `{function_name}` calls `len` with {}, expected Str or List<_>",
-                        argument_types[0]
-                    ),
-                ));
+                errors.push(
+                    Diagnostic::error(
+                        "argument_type_mismatch",
+                        format!(
+                            "function `{function_name}` calls `len` with {}, expected Str or List<_>",
+                            argument_types[0]
+                        ),
+                    )
+                    .with_location(default_location_for(context, Some(function_name.to_string()))),
+                );
             }
             Some(ValueType::Int)
         }
@@ -813,13 +1242,21 @@ fn infer_builtin_call_type(
                 callee,
                 argument_types,
                 &[ValueType::Str, ValueType::Str],
+                context,
                 errors,
                 function_name,
             );
             Some(ValueType::Str)
         }
         "abs" => {
-            check_builtin_args(callee, argument_types, &[ValueType::Int], errors, function_name);
+            check_builtin_args(
+                callee,
+                argument_types,
+                &[ValueType::Int],
+                context,
+                errors,
+                function_name,
+            );
             Some(ValueType::Int)
         }
         "min" | "max" => {
@@ -827,6 +1264,207 @@ fn infer_builtin_call_type(
                 callee,
                 argument_types,
                 &[ValueType::Int, ValueType::Int],
+                context,
+                errors,
+                function_name,
+            );
+            Some(ValueType::Int)
+        }
+        "contains" => {
+            if argument_types.len() == 2 {
+                match (&argument_types[0], &argument_types[1]) {
+                    (ValueType::Str, ValueType::Str)
+                    | (ValueType::List(_), _)
+                    | (ValueType::Object, ValueType::Str) => {}
+                    _ => errors.push(
+                        Diagnostic::error(
+                            "argument_type_mismatch",
+                            format!(
+                                "function `{function_name}` calls `contains` with incompatible arguments"
+                            ),
+                        )
+                        .with_location(default_location_for(
+                            context,
+                            Some(function_name.to_string()),
+                        )),
+                    ),
+                }
+            } else {
+                errors.push(
+                    Diagnostic::error(
+                        "invalid_argument_count",
+                        format!(
+                            "function `{function_name}` calls `contains` with {} arguments but expected 2",
+                            argument_types.len()
+                        ),
+                    )
+                    .with_location(default_location_for(context, Some(function_name.to_string()))),
+                );
+            }
+            Some(ValueType::Bool)
+        }
+        "starts_with" | "ends_with" | "trim" | "upper" | "lower" => {
+            let expected: &[ValueType] = if matches!(callee, "trim" | "upper" | "lower") {
+                &[ValueType::Str]
+            } else {
+                &[ValueType::Str, ValueType::Str]
+            };
+            check_builtin_args(callee, argument_types, expected, context, errors, function_name);
+            if matches!(callee, "starts_with" | "ends_with") {
+                Some(ValueType::Bool)
+            } else {
+                Some(ValueType::Str)
+            }
+        }
+        "join" => {
+            if argument_types.len() == 2 {
+                if !matches!(&argument_types[0], ValueType::List(inner) if matches!(inner.as_ref(), ValueType::Str | ValueType::Any))
+                    || !matches!(&argument_types[1], ValueType::Str)
+                {
+                    errors.push(
+                        Diagnostic::error(
+                            "argument_type_mismatch",
+                            format!(
+                                "function `{function_name}` calls `join` with {}, {}, expected List<Str> and Str",
+                                argument_types[0], argument_types[1]
+                            ),
+                        )
+                        .with_location(default_location_for(
+                            context,
+                            Some(function_name.to_string()),
+                        )),
+                    );
+                }
+            } else {
+                errors.push(
+                    Diagnostic::error(
+                        "invalid_argument_count",
+                        format!(
+                            "function `{function_name}` calls `join` with {} arguments but expected 2",
+                            argument_types.len()
+                        ),
+                    )
+                    .with_location(default_location_for(context, Some(function_name.to_string()))),
+                );
+            }
+            Some(ValueType::Str)
+        }
+        "first" | "last" => {
+            if argument_types.len() == 1 {
+                match &argument_types[0] {
+                    ValueType::List(inner) => Some(ValueType::Optional(inner.clone())),
+                    other => {
+                        errors.push(
+                            Diagnostic::error(
+                                "argument_type_mismatch",
+                                format!(
+                                    "function `{function_name}` calls `{callee}` with {other}, expected List<_>"
+                                ),
+                            )
+                            .with_location(default_location_for(
+                                context,
+                                Some(function_name.to_string()),
+                            )),
+                        );
+                        Some(ValueType::Any)
+                    }
+                }
+            } else {
+                errors.push(
+                    Diagnostic::error(
+                        "invalid_argument_count",
+                        format!(
+                            "function `{function_name}` calls `{callee}` with {} arguments but expected 1",
+                            argument_types.len()
+                        ),
+                    )
+                    .with_location(default_location_for(context, Some(function_name.to_string()))),
+                );
+                Some(ValueType::Any)
+            }
+        }
+        "all" | "any" => {
+            if argument_types.len() == 1 {
+                if !matches!(&argument_types[0], ValueType::List(inner) if matches!(inner.as_ref(), ValueType::Bool | ValueType::Any))
+                {
+                    errors.push(
+                        Diagnostic::error(
+                            "argument_type_mismatch",
+                            format!(
+                                "function `{function_name}` calls `{callee}` with {}, expected List<Bool>",
+                                argument_types[0]
+                            ),
+                        )
+                        .with_location(default_location_for(
+                            context,
+                            Some(function_name.to_string()),
+                        )),
+                    );
+                }
+            } else {
+                errors.push(
+                    Diagnostic::error(
+                        "invalid_argument_count",
+                        format!(
+                            "function `{function_name}` calls `{callee}` with {} arguments but expected 1",
+                            argument_types.len()
+                        ),
+                    )
+                    .with_location(default_location_for(context, Some(function_name.to_string()))),
+                );
+            }
+            Some(ValueType::Bool)
+        }
+        "has_key" => {
+            check_builtin_args(
+                callee,
+                argument_types,
+                &[ValueType::Object, ValueType::Str],
+                context,
+                errors,
+                function_name,
+            );
+            Some(ValueType::Bool)
+        }
+        "get_str" => {
+            check_builtin_args(
+                callee,
+                argument_types,
+                &[ValueType::Object, ValueType::Str],
+                context,
+                errors,
+                function_name,
+            );
+            Some(ValueType::Optional(Box::new(ValueType::Str)))
+        }
+        "get_int" => {
+            check_builtin_args(
+                callee,
+                argument_types,
+                &[ValueType::Object, ValueType::Str],
+                context,
+                errors,
+                function_name,
+            );
+            Some(ValueType::Optional(Box::new(ValueType::Int)))
+        }
+        "keys" => {
+            check_builtin_args(
+                callee,
+                argument_types,
+                &[ValueType::Object],
+                context,
+                errors,
+                function_name,
+            );
+            Some(ValueType::List(Box::new(ValueType::Str)))
+        }
+        "clamp" => {
+            check_builtin_args(
+                callee,
+                argument_types,
+                &[ValueType::Int, ValueType::Int, ValueType::Int],
+                context,
                 errors,
                 function_name,
             );
@@ -840,30 +1478,37 @@ fn check_builtin_args(
     callee: &str,
     actual: &[ValueType],
     expected: &[ValueType],
+    context: &AnalysisContext,
     errors: &mut Vec<Diagnostic>,
     function_name: &str,
 ) {
     if actual.len() != expected.len() {
-        errors.push(Diagnostic::error(
-            "invalid_argument_count",
-            format!(
-                "function `{function_name}` calls `{callee}` with {} arguments but expected {}",
-                actual.len(),
-                expected.len()
-            ),
-        ));
+        errors.push(
+            Diagnostic::error(
+                "invalid_argument_count",
+                format!(
+                    "function `{function_name}` calls `{callee}` with {} arguments but expected {}",
+                    actual.len(),
+                    expected.len()
+                ),
+            )
+            .with_location(default_location_for(context, Some(function_name.to_string()))),
+        );
         return;
     }
 
     for (index, (actual_ty, expected_ty)) in actual.iter().zip(expected).enumerate() {
         if !type_matches(actual_ty, expected_ty) {
-            errors.push(Diagnostic::error(
-                "argument_type_mismatch",
-                format!(
-                    "function `{function_name}` passes argument {} to `{callee}` as {actual_ty}, expected {expected_ty}",
-                    index + 1
-                ),
-            ));
+            errors.push(
+                Diagnostic::error(
+                    "argument_type_mismatch",
+                    format!(
+                        "function `{function_name}` passes argument {} to `{callee}` as {actual_ty}, expected {expected_ty}",
+                        index + 1
+                    ),
+                )
+                .with_location(default_location_for(context, Some(function_name.to_string()))),
+            );
         }
     }
 }
@@ -871,6 +1516,7 @@ fn check_builtin_args(
 fn infer_list_type(
     items: &[Expression],
     scope: &ScopeStack,
+    context: &AnalysisContext,
     functions: &BTreeMap<String, FunctionSignature>,
     type_index: &BTreeMap<String, TypeDefinition>,
     errors: &mut Vec<Diagnostic>,
@@ -879,18 +1525,28 @@ fn infer_list_type(
     let mut item_type: Option<ValueType> = None;
 
     for item in items {
-        let current =
-            infer_expression_type(item, scope, functions, type_index, errors, function_name);
+        let current = infer_expression_type(
+            item,
+            scope,
+            context,
+            functions,
+            type_index,
+            errors,
+            function_name,
+        );
         item_type = Some(match item_type {
             Some(previous) if type_matches(&current, &previous) => previous,
             Some(previous) if type_matches(&previous, &current) => current,
             Some(previous) => {
-                errors.push(Diagnostic::error(
-                    "inconsistent_list_item_types",
-                    format!(
-                        "function `{function_name}` mixes list item types {previous} and {current}"
-                    ),
-                ));
+                errors.push(
+                    Diagnostic::error(
+                        "inconsistent_list_item_types",
+                        format!(
+                            "function `{function_name}` mixes list item types {previous} and {current}"
+                        ),
+                    )
+                    .with_location(default_location_for(context, Some(function_name.to_string()))),
+                );
                 ValueType::Any
             }
             None => current,
@@ -904,6 +1560,7 @@ fn infer_binary_type(
     operator: BinaryOperator,
     left: &ValueType,
     right: &ValueType,
+    context: &AnalysisContext,
     errors: &mut Vec<Diagnostic>,
     function_name: &str,
     expression: &Expression,
@@ -916,25 +1573,31 @@ fn infer_binary_type(
             if matches!(left, ValueType::Int | ValueType::Float) && type_matches(left, right) {
                 left.clone()
             } else {
-                errors.push(Diagnostic::error(
-                    "invalid_binary_operands",
-                    format!(
-                        "function `{function_name}` uses incompatible numeric operands in `{}`",
-                        format_expression(expression)
-                    ),
-                ));
+                errors.push(
+                    Diagnostic::error(
+                        "invalid_binary_operands",
+                        format!(
+                            "function `{function_name}` uses incompatible numeric operands in `{}`",
+                            format_expression(expression)
+                        ),
+                    )
+                    .with_location(default_location_for(context, Some(function_name.to_string()))),
+                );
                 ValueType::Any
             }
         }
         BinaryOperator::Equal | BinaryOperator::NotEqual => {
             if !type_matches(left, right) && !type_matches(right, left) {
-                errors.push(Diagnostic::error(
-                    "invalid_binary_operands",
-                    format!(
-                        "function `{function_name}` compares incompatible values in `{}`",
-                        format_expression(expression)
-                    ),
-                ));
+                errors.push(
+                    Diagnostic::error(
+                        "invalid_binary_operands",
+                        format!(
+                            "function `{function_name}` compares incompatible values in `{}`",
+                            format_expression(expression)
+                        ),
+                    )
+                    .with_location(default_location_for(context, Some(function_name.to_string()))),
+                );
             }
             ValueType::Bool
         }
@@ -945,13 +1608,16 @@ fn infer_binary_type(
             if matches!(left, ValueType::Int | ValueType::Float) && type_matches(left, right) {
                 ValueType::Bool
             } else {
-                errors.push(Diagnostic::error(
-                    "invalid_binary_operands",
-                    format!(
-                        "function `{function_name}` uses non-comparable operands in `{}`",
-                        format_expression(expression)
-                    ),
-                ));
+                errors.push(
+                    Diagnostic::error(
+                        "invalid_binary_operands",
+                        format!(
+                            "function `{function_name}` uses non-comparable operands in `{}`",
+                            format_expression(expression)
+                        ),
+                    )
+                    .with_location(default_location_for(context, Some(function_name.to_string()))),
+                );
                 ValueType::Bool
             }
         }
@@ -959,13 +1625,16 @@ fn infer_binary_type(
             if matches!(left, ValueType::Bool) && matches!(right, ValueType::Bool) {
                 ValueType::Bool
             } else {
-                errors.push(Diagnostic::error(
-                    "invalid_binary_operands",
-                    format!(
-                        "function `{function_name}` uses non-boolean operands in `{}`",
-                        format_expression(expression)
-                    ),
-                ));
+                errors.push(
+                    Diagnostic::error(
+                        "invalid_binary_operands",
+                        format!(
+                            "function `{function_name}` uses non-boolean operands in `{}`",
+                            format_expression(expression)
+                        ),
+                    )
+                    .with_location(default_location_for(context, Some(function_name.to_string()))),
+                );
                 ValueType::Bool
             }
         }
@@ -1183,6 +1852,7 @@ ensures [len(result) > 0]
                 _ => unreachable!(),
             },
             &super::ScopeStack::new(),
+            &super::AnalysisContext::default(),
             &BTreeMap::new(),
             &BTreeMap::new(),
             &mut Vec::new(),

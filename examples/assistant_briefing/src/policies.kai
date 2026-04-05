@@ -1,0 +1,14 @@
+module demo.assistant_briefing.policies;
+
+fn policy_line() -> Str
+describe "Return a deterministic policy suffix for the generated briefing"
+tags ["ai", "policy", "text"]
+requires []
+ensures [len(result) > 0]
+{
+  if contains("stable json output", "json") {
+    return " Preserve stable JSON outputs.";
+  } else {
+    return " Preserve deterministic outputs.";
+  }
+}

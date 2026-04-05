@@ -1,0 +1,10 @@
+module demo.assistant_briefing.briefing;
+
+fn briefing_line() -> Str
+describe "Return the main briefing text for downstream AI systems"
+tags ["ai", "briefing", "text"]
+requires []
+ensures [len(result) > 0]
+{
+  return trim("  Summarize the codebase before proposing changes. ");
+}

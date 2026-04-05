@@ -1,0 +1,32 @@
+module demo.decision_bundle;
+use demo.decision_bundle.labels;
+use demo.decision_bundle.scoring;
+
+context {
+  goal: "Run deterministic decision logic across multiple Kairos modules";
+  audience: "LLM";
+  domain: "decision-engine";
+  assumptions: [
+    "Scores can arrive slightly outside the supported range.",
+    "The decision policy should remain transparent.",
+  ];
+}
+
+fn classify(raw_score: Int) -> Str
+describe "Normalize a raw score and map it to a label"
+tags ["rules", "decision", "multifile"]
+requires [raw_score >= 0, raw_score <= 150]
+ensures [len(result) > 0]
+{
+  let bounded = clamp_score(raw_score);
+  return label_for(bounded);
+}
+
+fn main() -> Str
+describe "Run the bundled decision flow for a deterministic sample input"
+tags ["rules", "entry", "demo"]
+requires []
+ensures [len(result) > 0]
+{
+  return classify(72);
+}

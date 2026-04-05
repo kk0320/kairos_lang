@@ -1,0 +1,16 @@
+module demo.decision_bundle.labels;
+
+fn label_for(score: Int) -> Str
+describe "Map a bounded score to a label"
+tags ["rules", "labels"]
+requires [score >= 0, score <= 100]
+ensures [len(result) > 0]
+{
+  if score >= 80 {
+    return "HIGH";
+  } else if score >= 50 {
+    return "MEDIUM";
+  } else {
+    return "LOW";
+  }
+}

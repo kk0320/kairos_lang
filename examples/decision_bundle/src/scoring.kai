@@ -1,0 +1,10 @@
+module demo.decision_bundle.scoring;
+
+fn clamp_score(raw_score: Int) -> Int
+describe "Clamp a raw score into the supported range"
+tags ["rules", "math"]
+requires [raw_score >= 0, raw_score <= 150]
+ensures [result >= 0, result <= 100]
+{
+  return clamp(raw_score, 0, 100);
+}

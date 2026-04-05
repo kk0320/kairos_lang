@@ -1,0 +1,19 @@
+module demo.stdlib_playbook.records;
+
+fn sample_catalog() -> Any
+describe "Return a small deterministic object"
+tags ["stdlib", "object"]
+requires []
+ensures [has_key(result, "title")]
+{
+  return {title: "Kairos", owner: "team", score: 4};
+}
+
+fn catalog_keys_text() -> Str
+describe "Return sorted object keys as a string"
+tags ["stdlib", "object", "keys"]
+requires []
+ensures [len(result) > 0]
+{
+  return join(keys(sample_catalog()), ",");
+}

@@ -10,5 +10,8 @@ They cover:
 - `prompt`
 - `fmt`
 - `run`
+- file and project-root inputs
+- structured import-failure cases
+- bundled multi-file example projects
 
 The `tests/fixtures` directory remains available for parser and semantic fixtures that are shared across crates.

@@ -1,0 +1,28 @@
+module demo.stdlib_playbook;
+use demo.stdlib_playbook.records;
+use demo.stdlib_playbook.strings;
+
+context {
+  goal: "Show the deterministic Kairos stdlib subset for AI-first scripting";
+  audience: "LLM";
+  domain: "stdlib-demo";
+  assumptions: [
+    "Object helpers should stay side-effect free.",
+    "String and list helpers should produce stable outputs.",
+  ];
+}
+
+fn main() -> Str
+describe "Produce a stable stdlib summary line"
+tags ["stdlib", "demo", "multifile"]
+requires []
+ensures [len(result) > 0]
+{
+  let catalog = sample_catalog();
+  let keys_text = catalog_keys_text();
+  if has_key(catalog, "title") && contains(keys_text, "owner") {
+    return concat(title_line(), concat(" | keys=", keys_text));
+  } else {
+    return "catalog unavailable";
+  }
+}

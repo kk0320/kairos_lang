@@ -1,0 +1,11 @@
+module demo.stdlib_playbook.strings;
+
+fn title_line() -> Str
+describe "Return a normalized title line"
+tags ["stdlib", "string"]
+requires []
+ensures [starts_with(result, "Title:")]
+{
+  let raw = "  kairos  ";
+  return concat("Title: ", upper(trim(raw)));
+}

@@ -9,14 +9,29 @@ fn fixture(path: &str) -> PathBuf {
 }
 
 #[test]
-fn check_reports_valid_module() {
+fn check_reports_project_when_file_belongs_to_manifest() {
     Command::cargo_bin("kairos")
         .expect("binary should build")
         .arg("check")
         .arg(fixture("examples/hello_context/src/main.kai"))
         .assert()
         .success()
-        .stdout(contains("OK: module `demo.hello_context` validated"));
+        .stdout(contains("OK: project `hello_context` validated"))
+        .stdout(contains("Focused module: demo.hello_context"));
+}
+
+#[test]
+fn check_accepts_project_root_json() {
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .arg("check")
+        .arg(fixture("examples/assistant_briefing"))
+        .arg("--json")
+        .assert()
+        .success()
+        .stdout(contains("\"kind\": \"project\""))
+        .stdout(contains("\"package\": \"assistant_briefing\""))
+        .stdout(contains("\"module_count\": 3"));
 }
 
 #[test]
@@ -29,6 +44,20 @@ fn ast_outputs_json_shape() {
         .assert()
         .success()
         .stdout(contains("\"module\": \"demo.hello_context\""));
+}
+
+#[test]
+fn ast_outputs_project_json_shape_for_project_root() {
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .arg("ast")
+        .arg(fixture("examples/assistant_briefing"))
+        .arg("--json")
+        .assert()
+        .success()
+        .stdout(contains("\"entry_module\": \"demo.assistant_briefing\""))
+        .stdout(contains("\"relative_path\": \"src/briefing.kai\""))
+        .stdout(contains("\"module\": \"demo.assistant_briefing.policies\""));
 }
 
 #[test]
@@ -46,6 +75,20 @@ fn ir_outputs_machine_readable_json() {
 }
 
 #[test]
+fn ir_outputs_project_machine_readable_json() {
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .arg("ir")
+        .arg(fixture("examples/decision_bundle"))
+        .arg("--json")
+        .assert()
+        .success()
+        .stdout(contains("\"package\""))
+        .stdout(contains("\"entry_module\": \"demo.decision_bundle\""))
+        .stdout(contains("\"module\": \"demo.decision_bundle.labels\""));
+}
+
+#[test]
 fn prompt_outputs_deterministic_sections() {
     Command::cargo_bin("kairos")
         .expect("binary should build")
@@ -56,6 +99,19 @@ fn prompt_outputs_deterministic_sections() {
         .stdout(contains("# Kairos System Context"))
         .stdout(contains("## Functions"))
         .stdout(contains("## Notes for Downstream LLMs"));
+}
+
+#[test]
+fn prompt_outputs_project_sections_for_project_root() {
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .arg("prompt")
+        .arg(fixture("examples/assistant_briefing"))
+        .assert()
+        .success()
+        .stdout(contains("# Kairos Project Context"))
+        .stdout(contains("## Package"))
+        .stdout(contains("### demo.assistant_briefing.briefing"));
 }
 
 #[test]
@@ -98,6 +154,18 @@ ensures[len(result)>0]
 }
 
 #[test]
+fn fmt_can_check_project_root() {
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .arg("fmt")
+        .arg(fixture("examples/assistant_briefing"))
+        .arg("--check")
+        .assert()
+        .success()
+        .stdout(contains("canonically formatted"));
+}
+
+#[test]
 fn run_supports_argument_driven_execution() {
     Command::cargo_bin("kairos")
         .expect("binary should build")
@@ -115,6 +183,36 @@ fn run_supports_argument_driven_execution() {
 }
 
 #[test]
+fn run_supports_project_root_execution() {
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .arg("run")
+        .arg(fixture("examples/decision_bundle"))
+        .arg("--function")
+        .arg("classify")
+        .arg("--arg")
+        .arg("72")
+        .arg("--json")
+        .assert()
+        .success()
+        .stdout(contains("\"module\": \"demo.decision_bundle\""))
+        .stdout(contains("\"MEDIUM\""));
+}
+
+#[test]
+fn run_supports_stdlib_project_execution() {
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .arg("run")
+        .arg(fixture("examples/stdlib_playbook"))
+        .arg("--json")
+        .assert()
+        .success()
+        .stdout(contains("\"module\": \"demo.stdlib_playbook\""))
+        .stdout(contains("Title: KAIROS | keys=owner,score,title"));
+}
+
+#[test]
 fn run_requires_function_when_no_zero_arg_entry_exists() {
     Command::cargo_bin("kairos")
         .expect("binary should build")
@@ -123,4 +221,30 @@ fn run_requires_function_when_no_zero_arg_entry_exists() {
         .assert()
         .failure()
         .stderr(contains("no zero-argument functions are available"));
+}
+
+#[test]
+fn check_reports_structured_import_failure() {
+    let tempdir = tempdir().expect("tempdir should exist");
+    fs::create_dir_all(tempdir.path().join("src")).expect("source tree should create");
+    fs::write(
+        tempdir.path().join("kairos.toml"),
+        "[package]\nname = \"broken\"\nversion = \"0.2.0\"\nentry = \"src/main.kai\"\n",
+    )
+    .expect("manifest should write");
+    fs::write(
+        tempdir.path().join("src/main.kai"),
+        "module demo.broken;\nuse demo.missing;\n\nfn main() -> Str\ndescribe \"broken\"\ntags [\"test\"]\nrequires []\nensures [len(result) > 0]\n{\n  return \"nope\";\n}\n",
+    )
+    .expect("source should write");
+
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .arg("check")
+        .arg(tempdir.path())
+        .arg("--json")
+        .assert()
+        .failure()
+        .stdout(contains("\"status\": \"error\""))
+        .stdout(contains("\"code\": \"unresolved_import\""));
 }

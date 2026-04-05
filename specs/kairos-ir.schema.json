@@ -1,60 +1,122 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Kairos IR",
-  "type": "object",
-  "required": [
-    "module",
-    "imports",
-    "context",
-    "schemas",
-    "enums",
-    "type_aliases",
-    "functions",
-    "source_hash"
-  ],
-  "properties": {
-    "module": {
-      "type": "string"
+  "oneOf": [
+    {
+      "$ref": "#/$defs/program"
     },
-    "imports": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "context": {
-      "type": "object",
-      "additionalProperties": true
-    },
-    "schemas": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/schema"
-      }
-    },
-    "enums": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/enum"
-      }
-    },
-    "type_aliases": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/type_alias"
-      }
-    },
-    "functions": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/function"
-      }
-    },
-    "source_hash": {
-      "type": "string"
+    {
+      "$ref": "#/$defs/project"
     }
-  },
+  ],
   "$defs": {
+    "program": {
+      "type": "object",
+      "required": [
+        "module",
+        "imports",
+        "context",
+        "schemas",
+        "enums",
+        "type_aliases",
+        "functions",
+        "source_hash"
+      ],
+      "properties": {
+        "module": {
+          "type": "string"
+        },
+        "imports": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "context": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "schemas": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/schema"
+          }
+        },
+        "enums": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/enum"
+          }
+        },
+        "type_aliases": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/type_alias"
+          }
+        },
+        "functions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/function"
+          }
+        },
+        "source_hash": {
+          "type": "string"
+        }
+      }
+    },
+    "project": {
+      "type": "object",
+      "required": [
+        "package",
+        "modules",
+        "source_hash"
+      ],
+      "properties": {
+        "package": {
+          "$ref": "#/$defs/package"
+        },
+        "modules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/program"
+          }
+        },
+        "source_hash": {
+          "type": "string"
+        }
+      }
+    },
+    "package": {
+      "type": "object",
+      "required": [
+        "name",
+        "version",
+        "entry_file",
+        "entry_module",
+        "emit"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "entry_file": {
+          "type": "string"
+        },
+        "entry_module": {
+          "type": "string"
+        },
+        "emit": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "schema": {
       "type": "object",
       "required": [

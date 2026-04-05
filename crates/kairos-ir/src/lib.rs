@@ -7,6 +7,7 @@ use kairos_ast::{
     format_expression, BinaryOperator, ElseBranch, Expression, FieldDecl, Literal, Program,
     Statement, TypeRef,
 };
+use kairos_project::AnalyzedProject;
 use kairos_semantic::AnalyzedProgram;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -22,6 +23,22 @@ pub struct KirProgram {
     pub type_aliases: Vec<KirTypeAlias>,
     pub functions: Vec<KirFunction>,
     pub source_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KirProject {
+    pub package: KirPackage,
+    pub modules: Vec<KirProgram>,
+    pub source_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KirPackage {
+    pub name: String,
+    pub version: String,
+    pub entry_file: String,
+    pub entry_module: String,
+    pub emit: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,6 +205,27 @@ pub fn lower(analyzed: &AnalyzedProgram) -> KirProgram {
     }
 }
 
+pub fn lower_project(project: &AnalyzedProject) -> KirProject {
+    let modules = project.modules.iter().map(|module| lower(&module.analyzed)).collect::<Vec<_>>();
+
+    KirProject {
+        package: KirPackage {
+            name: project.project.manifest.package.name.clone(),
+            version: project.project.manifest.package.version.clone(),
+            entry_file: project.project.entry_file.clone(),
+            entry_module: project.project.entry_module.clone(),
+            emit: project.project.manifest.build.emit.clone(),
+        },
+        source_hash: hash_project(
+            &project.project.manifest.package.name,
+            &project.project.manifest.package.version,
+            &project.project.entry_file,
+            &modules,
+        ),
+        modules,
+    }
+}
+
 pub fn render_prompt(program: &KirProgram) -> String {
     let mut output = String::new();
     writeln!(output, "# Kairos System Context").expect("writing to string cannot fail");
@@ -304,6 +342,54 @@ pub fn render_prompt(program: &KirProgram) -> String {
     writeln!(
         output,
         "- KIR bodies preserve the executable subset for validation and interpretation."
+    )
+    .expect("writing to string cannot fail");
+
+    output
+}
+
+pub fn render_project_prompt(project: &KirProject) -> String {
+    let mut output = String::new();
+    writeln!(output, "# Kairos Project Context").expect("writing to string cannot fail");
+    writeln!(output).expect("writing to string cannot fail");
+    writeln!(output, "## Package").expect("writing to string cannot fail");
+    writeln!(output, "- name: {}", project.package.name).expect("writing to string cannot fail");
+    writeln!(output, "- version: {}", project.package.version)
+        .expect("writing to string cannot fail");
+    writeln!(output, "- entry_file: {}", project.package.entry_file)
+        .expect("writing to string cannot fail");
+    writeln!(output, "- entry_module: {}", project.package.entry_module)
+        .expect("writing to string cannot fail");
+    writeln!(output, "- source_hash: {}", project.source_hash)
+        .expect("writing to string cannot fail");
+    writeln!(output).expect("writing to string cannot fail");
+
+    writeln!(output, "## Modules").expect("writing to string cannot fail");
+    for module in &project.modules {
+        writeln!(output, "### {}", module.module).expect("writing to string cannot fail");
+        if module.imports.is_empty() {
+            writeln!(output, "- imports: none").expect("writing to string cannot fail");
+        } else {
+            writeln!(output, "- imports: {}", module.imports.join(", "))
+                .expect("writing to string cannot fail");
+        }
+
+        let module_prompt = render_prompt(module);
+        for line in module_prompt.lines().skip(2) {
+            writeln!(output, "{line}").expect("writing to string cannot fail");
+        }
+        writeln!(output).expect("writing to string cannot fail");
+    }
+
+    writeln!(output, "## Notes for Downstream LLMs").expect("writing to string cannot fail");
+    writeln!(
+        output,
+        "- Module imports are already validated for deterministic project resolution."
+    )
+    .expect("writing to string cannot fail");
+    writeln!(
+        output,
+        "- Entry module context should be treated as the primary execution and prompt boundary."
     )
     .expect("writing to string cannot fail");
 
@@ -588,12 +674,34 @@ fn hash_source(source: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+fn hash_project(name: &str, version: &str, entry_file: &str, modules: &[KirProgram]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(name.as_bytes());
+    hasher.update(version.as_bytes());
+    hasher.update(entry_file.as_bytes());
+    for module in modules {
+        hasher.update(module.module.as_bytes());
+        hasher.update(module.source_hash.as_bytes());
+    }
+    format!("{:x}", hasher.finalize())
+}
+
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use kairos_parser::parse_source;
+    use kairos_project::{analyze_project, load_project};
     use kairos_semantic::analyze;
 
-    use super::{format_kir_expression, lower, render_prompt, KirExpression};
+    use super::{
+        format_kir_expression, lower, lower_project, render_project_prompt, render_prompt,
+        KirExpression,
+    };
+
+    fn fixture(path: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../").join(path)
+    }
 
     #[test]
     fn lowers_example_to_expected_ir_shape() {
@@ -642,5 +750,34 @@ mod tests {
         };
 
         assert_eq!(format_kir_expression(&expression), "(1 + 2) * value");
+    }
+
+    #[test]
+    fn lowers_project_to_stable_shape() {
+        let project =
+            load_project(&fixture("examples/assistant_briefing")).expect("project should load");
+        let analyzed = analyze_project(&project).expect("project should analyze");
+        let kir = lower_project(&analyzed);
+
+        assert_eq!(kir.package.name, "assistant_briefing");
+        assert_eq!(kir.package.entry_module, "demo.assistant_briefing");
+        assert_eq!(kir.modules.len(), 3);
+        assert!(kir
+            .modules
+            .iter()
+            .any(|module| module.module == "demo.assistant_briefing.briefing"));
+    }
+
+    #[test]
+    fn project_prompt_contains_package_and_modules() {
+        let project =
+            load_project(&fixture("examples/decision_bundle")).expect("project should load");
+        let analyzed = analyze_project(&project).expect("project should analyze");
+        let prompt = render_project_prompt(&lower_project(&analyzed));
+
+        assert!(prompt.contains("# Kairos Project Context"));
+        assert!(prompt.contains("## Package"));
+        assert!(prompt.contains("### demo.decision_bundle.scoring"));
+        assert!(prompt.contains("## Notes for Downstream LLMs"));
     }
 }

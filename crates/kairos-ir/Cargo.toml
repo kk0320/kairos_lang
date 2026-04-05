@@ -9,6 +9,7 @@ serde.workspace = true
 serde_json.workspace = true
 kairos-semantic = { path = "../kairos-semantic" }
 kairos-ast = { path = "../kairos-ast" }
+kairos-project = { path = "../kairos-project" }
 sha2 = "0.10"
 
 [dev-dependencies]
