@@ -18,6 +18,15 @@ Kairos v0.5 is a working terminal-native language toolchain for small determinis
 - project scaffolding through `kairos new` and `kairos init`
 - bundled examples for AI context, rules, and stdlib usage
 
+## Demo
+
+<p align="center">
+  <img src="assets/images/kairos-shell-v05.png" alt="Kairos v0.5 shell screenshot" width="900">
+</p>
+
+Kairos v0.5 introduces a terminal-native shell with project-aware workflows,
+reload, watch mode, and project scaffolding.
+
 ## Quick start
 
 ```powershell
