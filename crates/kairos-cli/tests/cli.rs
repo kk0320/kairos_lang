@@ -238,7 +238,7 @@ fn run_supports_stdlib_project_execution() {
         .assert()
         .success()
         .stdout(contains("\"module\": \"demo.stdlib_playbook\""))
-        .stdout(contains("Title: KAIROS | keys=owner,score,title"));
+        .stdout(contains("Title: KAIROS PLATFORM | keys=owner,score,title"));
 }
 
 #[test]
@@ -318,6 +318,19 @@ fn shell_supports_modules_and_run_commands() {
         .stdout(contains("demo.decision_bundle.labels"))
         .stdout(contains("Kairos execution report"))
         .stdout(contains("classify => \"MEDIUM\""));
+}
+
+#[test]
+fn shell_supports_dependency_listing() {
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .arg("shell")
+        .arg(fixture("examples/package_reuse_demo"))
+        .write_stdin(":deps\n:quit\n")
+        .assert()
+        .success()
+        .stdout(contains("Direct dependencies"))
+        .stdout(contains("shared_rules -> shared_rules_lib"));
 }
 
 #[test]
@@ -402,4 +415,83 @@ fn init_scaffolds_current_directory_that_validates() {
         .assert()
         .success()
         .stdout(contains("validated"));
+}
+
+#[test]
+fn check_reports_local_dependency_project_health() {
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .arg("check")
+        .arg(fixture("examples/package_reuse_demo"))
+        .arg("--json")
+        .assert()
+        .success()
+        .stdout(contains("\"package\": \"package_reuse_demo\""))
+        .stdout(contains("\"dependency_count\": 1"))
+        .stdout(contains("\"package_count\": 2"));
+}
+
+#[test]
+fn prompt_includes_local_dependency_modules() {
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .arg("prompt")
+        .arg(fixture("examples/package_reuse_demo"))
+        .assert()
+        .success()
+        .stdout(contains("# Kairos Project Context"))
+        .stdout(contains("shared.rules_lib.api"));
+}
+
+#[test]
+fn test_command_runs_project_tests() {
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .arg("test")
+        .arg(fixture("examples/decision_bundle"))
+        .assert()
+        .success()
+        .stdout(contains("Kairos test report"))
+        .stdout(contains("classify_medium_case"))
+        .stdout(contains("[PASS]"));
+}
+
+#[test]
+fn test_command_supports_json_output() {
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .arg("test")
+        .arg(fixture("examples/package_reuse_demo"))
+        .arg("--json")
+        .assert()
+        .success()
+        .stdout(contains("\"status\": \"ok\""))
+        .stdout(contains("\"display_name\": \"demo.package_reuse_demo::dependency_smoke\""));
+}
+
+#[test]
+fn doctor_reports_project_health() {
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .arg("doctor")
+        .arg(fixture("examples/package_reuse_demo"))
+        .assert()
+        .success()
+        .stdout(contains("Kairos doctor report"))
+        .stdout(contains("dependency_count: 1"))
+        .stdout(contains("dependencies: 1 direct local dependencies resolved"));
+}
+
+#[test]
+fn doctor_reports_warning_when_no_project_is_detected() {
+    let tempdir = tempdir().expect("tempdir should exist");
+
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .current_dir(tempdir.path())
+        .arg("doctor")
+        .assert()
+        .success()
+        .stdout(contains("status: warning"))
+        .stdout(contains("no Kairos project or `.kai` file was detected"));
 }

@@ -2,8 +2,8 @@ use std::fmt;
 
 use kairos_ast::{
     BinaryOperator, Block, ContextBlock, ContextEntry, ElseBranch, EnumDecl, Expression, FieldDecl,
-    FunctionDecl, IfStatement, Literal, Metadata, ObjectField, Param, Program, SchemaDecl,
-    Statement, TypeAliasDecl, TypeRef,
+    FunctionDecl, IfStatement, ImportItem, Literal, Metadata, ObjectField, Param, Program,
+    SchemaDecl, Statement, TypeAliasDecl, TypeRef, UseDecl, Visibility,
 };
 use thiserror::Error;
 
@@ -20,6 +20,9 @@ pub struct Token {
 pub enum TokenKind {
     Module,
     Use,
+    Pub,
+    Test,
+    As,
     Context,
     Schema,
     Enum,
@@ -48,6 +51,7 @@ pub enum TokenKind {
     RightBracket,
     Comma,
     Colon,
+    DoubleColon,
     Semicolon,
     Dot,
     Arrow,
@@ -150,7 +154,12 @@ impl<'a> Lexer<'a> {
                 }
                 ':' => {
                     self.advance_char();
-                    TokenKind::Colon
+                    if self.peek_char() == Some(':') {
+                        self.advance_char();
+                        TokenKind::DoubleColon
+                    } else {
+                        TokenKind::Colon
+                    }
                 }
                 ';' => {
                     self.advance_char();
@@ -347,6 +356,9 @@ impl<'a> Lexer<'a> {
         match text.as_str() {
             "module" => TokenKind::Module,
             "use" => TokenKind::Use,
+            "pub" => TokenKind::Pub,
+            "test" => TokenKind::Test,
+            "as" => TokenKind::As,
             "context" => TokenKind::Context,
             "schema" => TokenKind::Schema,
             "enum" => TokenKind::Enum,
@@ -402,6 +414,12 @@ struct Parser {
     index: usize,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct DeclModifiers {
+    visibility: Visibility,
+    is_test: bool,
+}
+
 impl Parser {
     fn new(tokens: Vec<Token>) -> Self {
         Self { tokens, index: 0 }
@@ -413,22 +431,27 @@ impl Parser {
 
         while !self.at(TokenMatcher::Eof) {
             if self.at(TokenMatcher::Use) {
-                program.uses.push(self.parse_use_decl()?);
+                let import = self.parse_use_decl()?;
+                program.imports.push(import);
+                program.sync_uses_from_imports();
             } else if self.at(TokenMatcher::Context) {
                 if program.context.is_some() {
                     return Err(self.error_here("duplicate `context` block"));
                 }
                 program.context = Some(self.parse_context_decl()?);
-            } else if self.at(TokenMatcher::Schema) {
-                program.schemas.push(self.parse_schema_decl()?);
-            } else if self.at(TokenMatcher::Enum) {
-                program.enums.push(self.parse_enum_decl()?);
-            } else if self.at(TokenMatcher::Type) {
-                program.type_aliases.push(self.parse_type_alias()?);
-            } else if self.at(TokenMatcher::Fn) {
-                program.functions.push(self.parse_function_decl()?);
             } else {
-                return Err(self.error_here("expected a top-level declaration"));
+                let modifiers = self.parse_decl_modifiers()?;
+                if self.at(TokenMatcher::Schema) {
+                    program.schemas.push(self.parse_schema_decl(modifiers.visibility)?);
+                } else if self.at(TokenMatcher::Enum) {
+                    program.enums.push(self.parse_enum_decl(modifiers.visibility)?);
+                } else if self.at(TokenMatcher::Type) {
+                    program.type_aliases.push(self.parse_type_alias(modifiers.visibility)?);
+                } else if self.at(TokenMatcher::Fn) {
+                    program.functions.push(self.parse_function_decl(modifiers)?);
+                } else {
+                    return Err(self.error_here("expected a top-level declaration"));
+                }
             }
         }
 
@@ -443,11 +466,66 @@ impl Parser {
         Ok(path)
     }
 
-    fn parse_use_decl(&mut self) -> Result<String> {
+    fn parse_decl_modifiers(&mut self) -> Result<DeclModifiers> {
+        let mut modifiers = DeclModifiers::default();
+
+        loop {
+            if self.at(TokenMatcher::Pub) {
+                self.bump();
+                if matches!(modifiers.visibility, Visibility::Public) {
+                    return Err(self.error_here("duplicate `pub` modifier"));
+                }
+                modifiers.visibility = Visibility::Public;
+            } else if self.at(TokenMatcher::Test) {
+                self.bump();
+                if modifiers.is_test {
+                    return Err(self.error_here("duplicate `test` modifier"));
+                }
+                modifiers.is_test = true;
+            } else {
+                break;
+            }
+        }
+
+        Ok(modifiers)
+    }
+
+    fn parse_use_decl(&mut self) -> Result<UseDecl> {
         self.expect(TokenMatcher::Use, "`use`")?;
-        let path = self.parse_path()?;
+        let module = self.parse_path()?;
+        let mut alias = None;
+        let mut items = Vec::new();
+
+        if self.at(TokenMatcher::As) {
+            self.bump();
+            alias = Some(self.expect_identifier()?);
+        } else if self.at(TokenMatcher::DoubleColon) {
+            self.bump();
+            self.expect(TokenMatcher::LeftBrace, "`{`")?;
+            while !self.at(TokenMatcher::RightBrace) {
+                let name = self.expect_identifier()?;
+                let item_alias = if self.at(TokenMatcher::As) {
+                    self.bump();
+                    Some(self.expect_identifier()?)
+                } else {
+                    None
+                };
+                items.push(ImportItem { name, alias: item_alias });
+
+                if self.at(TokenMatcher::Comma) {
+                    self.bump();
+                    if self.at(TokenMatcher::RightBrace) {
+                        break;
+                    }
+                } else if !self.at(TokenMatcher::RightBrace) {
+                    return Err(self.error_here("expected `,` or `}` after import item"));
+                }
+            }
+            self.expect(TokenMatcher::RightBrace, "`}`")?;
+        }
+
         self.expect(TokenMatcher::Semicolon, "`;`")?;
-        Ok(path)
+        Ok(UseDecl { module, alias, items })
     }
 
     fn parse_context_decl(&mut self) -> Result<ContextBlock> {
@@ -467,7 +545,7 @@ impl Parser {
         Ok(ContextBlock { entries })
     }
 
-    fn parse_schema_decl(&mut self) -> Result<SchemaDecl> {
+    fn parse_schema_decl(&mut self, visibility: Visibility) -> Result<SchemaDecl> {
         self.expect(TokenMatcher::Schema, "`schema`")?;
         let name = self.expect_identifier()?;
         self.expect(TokenMatcher::LeftBrace, "`{`")?;
@@ -486,10 +564,10 @@ impl Parser {
         }
 
         self.expect(TokenMatcher::RightBrace, "`}`")?;
-        Ok(SchemaDecl { name, fields })
+        Ok(SchemaDecl { visibility, name, fields })
     }
 
-    fn parse_enum_decl(&mut self) -> Result<EnumDecl> {
+    fn parse_enum_decl(&mut self, visibility: Visibility) -> Result<EnumDecl> {
         self.expect(TokenMatcher::Enum, "`enum`")?;
         let name = self.expect_identifier()?;
         self.expect(TokenMatcher::LeftBrace, "`{`")?;
@@ -508,19 +586,19 @@ impl Parser {
         }
 
         self.expect(TokenMatcher::RightBrace, "`}`")?;
-        Ok(EnumDecl { name, variants })
+        Ok(EnumDecl { visibility, name, variants })
     }
 
-    fn parse_type_alias(&mut self) -> Result<TypeAliasDecl> {
+    fn parse_type_alias(&mut self, visibility: Visibility) -> Result<TypeAliasDecl> {
         self.expect(TokenMatcher::Type, "`type`")?;
         let name = self.expect_identifier()?;
         self.expect(TokenMatcher::Equal, "`=`")?;
         let target = self.parse_type_ref()?;
         self.expect(TokenMatcher::Semicolon, "`;`")?;
-        Ok(TypeAliasDecl { name, target })
+        Ok(TypeAliasDecl { visibility, name, target })
     }
 
-    fn parse_function_decl(&mut self) -> Result<FunctionDecl> {
+    fn parse_function_decl(&mut self, modifiers: DeclModifiers) -> Result<FunctionDecl> {
         self.expect(TokenMatcher::Fn, "`fn`")?;
         let name = self.expect_identifier()?;
         self.expect(TokenMatcher::LeftParen, "`(`")?;
@@ -531,7 +609,15 @@ impl Parser {
         let metadata = self.parse_metadata()?;
         let body = self.parse_block()?;
 
-        Ok(FunctionDecl { name, params, return_type, metadata, body })
+        Ok(FunctionDecl {
+            visibility: modifiers.visibility,
+            is_test: modifiers.is_test,
+            name,
+            params,
+            return_type,
+            metadata,
+            body,
+        })
     }
 
     fn parse_params(&mut self) -> Result<Vec<Param>> {
@@ -593,7 +679,7 @@ impl Parser {
     }
 
     fn parse_type_ref(&mut self) -> Result<TypeRef> {
-        let name = self.expect_identifier()?;
+        let name = self.parse_qualified_name()?;
         let mut arguments = Vec::new();
         if self.at(TokenMatcher::Less) {
             self.bump();
@@ -730,7 +816,8 @@ impl Parser {
     }
 
     fn parse_primary_expression(&mut self) -> Result<Expression> {
-        if let Some(identifier) = self.consume_identifier() {
+        if self.current().is_some_and(|token| matches!(token.kind, TokenKind::Identifier(_))) {
+            let identifier = self.parse_qualified_name()?;
             if self.at(TokenMatcher::LeftParen) {
                 self.bump();
                 let mut args = Vec::new();
@@ -830,6 +917,15 @@ impl Parser {
             segments.push(self.expect_identifier()?);
         }
         Ok(segments.join("."))
+    }
+
+    fn parse_qualified_name(&mut self) -> Result<String> {
+        let mut segments = vec![self.expect_identifier()?];
+        while self.at(TokenMatcher::DoubleColon) {
+            self.bump();
+            segments.push(self.expect_identifier()?);
+        }
+        Ok(segments.join("::"))
     }
 
     fn current_binary_operator(&self, operators: &[TokenMatcher]) -> Option<BinaryOperator> {
@@ -958,6 +1054,9 @@ impl Parser {
 enum TokenMatcher {
     Module,
     Use,
+    Pub,
+    Test,
+    As,
     Context,
     Schema,
     Enum,
@@ -982,6 +1081,7 @@ enum TokenMatcher {
     RightBracket,
     Comma,
     Colon,
+    DoubleColon,
     Semicolon,
     Dot,
     Arrow,
@@ -1008,6 +1108,9 @@ impl TokenMatcher {
             (self, kind),
             (Self::Module, TokenKind::Module)
                 | (Self::Use, TokenKind::Use)
+                | (Self::Pub, TokenKind::Pub)
+                | (Self::Test, TokenKind::Test)
+                | (Self::As, TokenKind::As)
                 | (Self::Context, TokenKind::Context)
                 | (Self::Schema, TokenKind::Schema)
                 | (Self::Enum, TokenKind::Enum)
@@ -1032,6 +1135,7 @@ impl TokenMatcher {
                 | (Self::RightBracket, TokenKind::RightBracket)
                 | (Self::Comma, TokenKind::Comma)
                 | (Self::Colon, TokenKind::Colon)
+                | (Self::DoubleColon, TokenKind::DoubleColon)
                 | (Self::Semicolon, TokenKind::Semicolon)
                 | (Self::Dot, TokenKind::Dot)
                 | (Self::Arrow, TokenKind::Arrow)
@@ -1064,7 +1168,7 @@ fn is_identifier_continue(ch: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use kairos_ast::{Expression, Literal, Statement};
+    use kairos_ast::{Expression, Literal, Statement, Visibility};
 
     use super::{lex_source, parse_source, TokenKind};
 
@@ -1072,7 +1176,7 @@ mod tests {
     fn lexes_keywords_literals_and_comments() {
         let tokens = lex_source(
             r#"
-            module demo.test;
+            module demo.sample;
             // comment
             fn hello() -> Str { return "ok"; }
             "#,
@@ -1083,7 +1187,7 @@ mod tests {
         assert_eq!(kinds[0], TokenKind::Module);
         assert_eq!(kinds[1], TokenKind::Identifier("demo".to_string()));
         assert_eq!(kinds[2], TokenKind::Dot);
-        assert_eq!(kinds[3], TokenKind::Identifier("test".to_string()));
+        assert_eq!(kinds[3], TokenKind::Identifier("sample".to_string()));
         assert!(kinds.contains(&TokenKind::Fn));
         assert!(kinds.contains(&TokenKind::Arrow));
         assert!(kinds.contains(&TokenKind::String("ok".to_string())));
@@ -1154,5 +1258,41 @@ ensures [len(result) > 0]
 
         assert_eq!(error.line, 1);
         assert!(error.message.contains("expected `module`"));
+    }
+
+    #[test]
+    fn parses_public_selective_imports_and_tests() {
+        let source = r#"
+module demo.main;
+use demo.shared.text::{normalize, summarize as summary};
+use demo.shared.types as shared_types;
+
+pub fn main() -> Str
+describe "demo"
+tags ["demo"]
+requires []
+ensures [len(result) > 0]
+{
+  return normalize(" ok ");
+}
+
+test fn smoke() -> Bool
+describe "smoke"
+tags ["test"]
+requires []
+ensures [result == true]
+{
+  return summary("ok") == "ok";
+}
+"#;
+
+        let program = parse_source(source).expect("source should parse");
+
+        assert_eq!(program.imports.len(), 2);
+        assert_eq!(program.uses, vec!["demo.shared.text", "demo.shared.types"]);
+        assert_eq!(program.imports[0].items.len(), 2);
+        assert_eq!(program.imports[1].alias.as_deref(), Some("shared_types"));
+        assert_eq!(program.functions[0].visibility, Visibility::Public);
+        assert!(program.functions[1].is_test);
     }
 }

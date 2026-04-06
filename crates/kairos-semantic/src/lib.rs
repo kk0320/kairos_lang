@@ -573,7 +573,7 @@ fn validate_declared_types(
         }
     }
 
-    for TypeAliasDecl { name, target } in &program.type_aliases {
+    for TypeAliasDecl { name, target, .. } in &program.type_aliases {
         if let Err(message) = resolve_type_ref(target, type_index, &mut BTreeSet::new()) {
             errors.push(
                 Diagnostic::error(
@@ -720,6 +720,28 @@ fn validate_function(
     let Some(signature) = functions.get(&function.name) else {
         return;
     };
+
+    if function.is_test {
+        if !function.params.is_empty() {
+            errors.push(
+                Diagnostic::error(
+                    "invalid_test_signature",
+                    format!("test function `{}` must not declare parameters", function.name),
+                )
+                .with_location(default_location_for(context, Some(function.name.clone()))),
+            );
+        }
+
+        if !type_matches(&signature.return_type, &ValueType::Bool) {
+            errors.push(
+                Diagnostic::error(
+                    "invalid_test_signature",
+                    format!("test function `{}` must return Bool", function.name),
+                )
+                .with_location(default_location_for(context, Some(function.name.clone()))),
+            );
+        }
+    }
 
     if function.metadata.describe.as_deref().is_none_or(|value| value.trim().is_empty()) {
         errors.push(
@@ -1303,12 +1325,13 @@ fn infer_builtin_call_type(
             }
             Some(ValueType::Bool)
         }
-        "starts_with" | "ends_with" | "trim" | "upper" | "lower" => {
-            let expected: &[ValueType] = if matches!(callee, "trim" | "upper" | "lower") {
-                &[ValueType::Str]
-            } else {
-                &[ValueType::Str, ValueType::Str]
-            };
+        "starts_with" | "ends_with" | "trim" | "upper" | "lower" | "normalize_space" => {
+            let expected: &[ValueType] =
+                if matches!(callee, "trim" | "upper" | "lower" | "normalize_space") {
+                    &[ValueType::Str]
+                } else {
+                    &[ValueType::Str, ValueType::Str]
+                };
             check_builtin_args(callee, argument_types, expected, context, errors, function_name);
             if matches!(callee, "starts_with" | "ends_with") {
                 Some(ValueType::Bool)
@@ -1448,6 +1471,39 @@ fn infer_builtin_call_type(
             );
             Some(ValueType::Optional(Box::new(ValueType::Int)))
         }
+        "get_bool" => {
+            check_builtin_args(
+                callee,
+                argument_types,
+                &[ValueType::Object, ValueType::Str],
+                context,
+                errors,
+                function_name,
+            );
+            Some(ValueType::Optional(Box::new(ValueType::Bool)))
+        }
+        "get_list" => {
+            check_builtin_args(
+                callee,
+                argument_types,
+                &[ValueType::Object, ValueType::Str],
+                context,
+                errors,
+                function_name,
+            );
+            Some(ValueType::Optional(Box::new(ValueType::List(Box::new(ValueType::Any)))))
+        }
+        "get_obj" => {
+            check_builtin_args(
+                callee,
+                argument_types,
+                &[ValueType::Object, ValueType::Str],
+                context,
+                errors,
+                function_name,
+            );
+            Some(ValueType::Optional(Box::new(ValueType::Object)))
+        }
         "keys" => {
             check_builtin_args(
                 callee,
@@ -1458,6 +1514,72 @@ fn infer_builtin_call_type(
                 function_name,
             );
             Some(ValueType::List(Box::new(ValueType::Str)))
+        }
+        "count" => {
+            check_builtin_args(
+                callee,
+                argument_types,
+                &[ValueType::List(Box::new(ValueType::Any))],
+                context,
+                errors,
+                function_name,
+            );
+            Some(ValueType::Int)
+        }
+        "sort" | "unique" => {
+            if argument_types.len() == 1 {
+                match &argument_types[0] {
+                    ValueType::List(inner) => {
+                        if callee == "sort"
+                            && !matches!(
+                                inner.as_ref(),
+                                ValueType::Int | ValueType::Float | ValueType::Str | ValueType::Any
+                            )
+                        {
+                            errors.push(
+                                Diagnostic::error(
+                                    "argument_type_mismatch",
+                                    format!(
+                                        "function `{function_name}` calls `sort` with List<{inner}>, expected List<Int>, List<Float>, or List<Str>"
+                                    ),
+                                )
+                                .with_location(default_location_for(
+                                    context,
+                                    Some(function_name.to_string()),
+                                )),
+                            );
+                        }
+                        Some(argument_types[0].clone())
+                    }
+                    other => {
+                        errors.push(
+                            Diagnostic::error(
+                                "argument_type_mismatch",
+                                format!(
+                                    "function `{function_name}` calls `{callee}` with {other}, expected List<_>"
+                                ),
+                            )
+                            .with_location(default_location_for(
+                                context,
+                                Some(function_name.to_string()),
+                            )),
+                        );
+                        Some(ValueType::Any)
+                    }
+                }
+            } else {
+                errors.push(
+                    Diagnostic::error(
+                        "invalid_argument_count",
+                        format!(
+                            "function `{function_name}` calls `{callee}` with {} arguments but expected 1",
+                            argument_types.len()
+                        ),
+                    )
+                    .with_location(default_location_for(context, Some(function_name.to_string()))),
+                );
+                Some(ValueType::Any)
+            }
         }
         "clamp" => {
             check_builtin_args(
@@ -1835,6 +1957,28 @@ ensures [len(result) > 0]
         let analyzed = analyze(program).expect("analysis should succeed");
         assert_eq!(analyzed.warnings.len(), 1);
         assert_eq!(analyzed.warnings[0].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn rejects_test_function_with_parameters() {
+        let program = parse_source(
+            r#"
+module demo.tests;
+
+test fn smoke(value: Int) -> Bool
+describe "invalid test"
+tags ["test"]
+requires []
+ensures [result == true]
+{
+  return value > 0;
+}
+"#,
+        )
+        .expect("source should parse");
+
+        let error = analyze(program).expect_err("analysis should fail");
+        assert!(error.to_string().contains("invalid_test_signature"));
     }
 
     #[test]

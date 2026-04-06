@@ -8,6 +8,7 @@ use anyhow::{bail, Context, Result};
 use kairos_interpreter::{run, run_project, ExecutionReport, RuntimeValue};
 use kairos_project::{analyze_project, find_manifest, load_project, AnalyzedProject, Project};
 use kairos_semantic::{AnalyzedProgram, Diagnostic, DiagnosticLocation, Severity};
+use serde::Serialize;
 use serde_json::{json, Value};
 
 #[derive(Debug, Clone)]
@@ -18,10 +19,88 @@ pub enum LoadedWorkspace {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModuleRecord {
+    pub package: Option<String>,
     pub module: String,
     pub relative_path: String,
     pub is_entry: bool,
     pub is_focus: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DependencyRecord {
+    pub alias: String,
+    pub package: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TestCaseRecord {
+    pub package: Option<String>,
+    pub module: String,
+    pub function: String,
+    pub display_name: String,
+    pub relative_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TestOutcome {
+    Passed,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TestResultRecord {
+    pub outcome: TestOutcome,
+    pub module: String,
+    pub function: String,
+    pub display_name: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<RuntimeValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TestReport {
+    pub status: &'static str,
+    pub target: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
+    pub total: usize,
+    pub passed: usize,
+    pub failed: usize,
+    pub results: Vec<TestResultRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DoctorStatus {
+    Ok,
+    Warning,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DoctorCheck {
+    pub name: String,
+    pub status: DoctorStatus,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DoctorReport {
+    pub status: DoctorStatus,
+    pub target: &'static str,
+    pub root: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entry_module: Option<String>,
+    pub module_count: usize,
+    pub package_count: usize,
+    pub dependency_count: usize,
+    pub checks: Vec<DoctorCheck>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<Value>,
 }
 
 pub struct ProjectModuleSelection<'a> {
@@ -43,10 +122,14 @@ impl LoadedWorkspace {
         if is_kai_file(path) {
             if let Some(manifest_path) = find_manifest(path) {
                 let project = load_project(&manifest_path).map_err(|error| error.diagnostics)?;
+                let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
                 let focus_module = project
                     .modules
                     .iter()
-                    .find(|module| module.path == path)
+                    .find(|module| {
+                        module.path.canonicalize().unwrap_or_else(|_| module.path.clone())
+                            == canonical_path
+                    })
                     .map(|module| module.module.clone());
                 let analyzed =
                     Box::new(analyze_project(&project).map_err(|error| error.diagnostics)?);
@@ -121,6 +204,24 @@ impl LoadedWorkspace {
         }
     }
 
+    pub fn package_count(&self) -> usize {
+        match self {
+            Self::Standalone { .. } => 1,
+            Self::Project { analyzed, .. } => analyzed.project.packages.len(),
+        }
+    }
+
+    pub fn dependency_count(&self) -> usize {
+        match self {
+            Self::Standalone { .. } => 0,
+            Self::Project { analyzed, .. } => analyzed
+                .project
+                .package(&analyzed.project.manifest.package.name)
+                .map(|package| package.dependencies.len())
+                .unwrap_or(0),
+        }
+    }
+
     pub fn mode_label(&self) -> &'static str {
         match self {
             Self::Standalone { .. } => "file-aware | deterministic",
@@ -145,6 +246,7 @@ impl LoadedWorkspace {
     pub fn module_records(&self) -> Vec<ModuleRecord> {
         match self {
             Self::Standalone { source_hint, analyzed } => vec![ModuleRecord {
+                package: None,
                 module: analyzed.program.module.clone(),
                 relative_path: normalize_display_path(source_hint),
                 is_entry: true,
@@ -155,12 +257,34 @@ impl LoadedWorkspace {
                 .modules
                 .iter()
                 .map(|module| ModuleRecord {
+                    package: Some(module.package.clone()),
                     module: module.module.clone(),
                     relative_path: module.relative_path.clone(),
                     is_entry: module.module == analyzed.project.entry_module,
                     is_focus: focus_module.as_deref().is_some_and(|focus| module.module == focus),
                 })
                 .collect(),
+        }
+    }
+
+    pub fn dependency_records(&self) -> Vec<DependencyRecord> {
+        match self {
+            Self::Standalone { .. } => Vec::new(),
+            Self::Project { analyzed, .. } => analyzed
+                .project
+                .package(&analyzed.project.manifest.package.name)
+                .map(|package| {
+                    package
+                        .dependencies
+                        .iter()
+                        .map(|dependency| DependencyRecord {
+                            alias: dependency.alias.clone(),
+                            package: dependency.package.clone(),
+                            path: dependency.path.clone(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 
@@ -241,6 +365,229 @@ impl LoadedWorkspace {
         }
     }
 
+    pub fn discover_tests(&self, filter: Option<&str>) -> Vec<TestCaseRecord> {
+        let filter = filter.map(str::to_lowercase);
+        let matches_filter = |name: &str| {
+            filter.as_deref().is_none_or(|filter| name.to_lowercase().contains(filter))
+        };
+
+        match self {
+            Self::Standalone { source_hint, analyzed } => analyzed
+                .program
+                .functions
+                .iter()
+                .filter(|function| function.is_test)
+                .map(|function| TestCaseRecord {
+                    package: None,
+                    module: analyzed.program.module.clone(),
+                    function: function.name.clone(),
+                    display_name: format!("{}::{}", analyzed.program.module, function.name),
+                    relative_path: normalize_display_path(source_hint),
+                })
+                .filter(|record| matches_filter(&record.display_name))
+                .collect(),
+            Self::Project { analyzed, .. } => {
+                let root_package = analyzed.project.manifest.package.name.clone();
+                analyzed
+                    .project
+                    .modules
+                    .iter()
+                    .zip(&analyzed.modules)
+                    .filter(|(project_module, _)| project_module.package == root_package)
+                    .flat_map(|(project_module, analyzed_module)| {
+                        analyzed_module
+                            .analyzed
+                            .program
+                            .functions
+                            .iter()
+                            .filter(|function| function.is_test)
+                            .map(move |function| TestCaseRecord {
+                                package: Some(project_module.package.clone()),
+                                module: project_module.module.clone(),
+                                function: function.name.clone(),
+                                display_name: format!(
+                                    "{}::{}",
+                                    project_module.module, function.name
+                                ),
+                                relative_path: project_module.relative_path.clone(),
+                            })
+                    })
+                    .filter(|record| matches_filter(&record.display_name))
+                    .collect()
+            }
+        }
+    }
+
+    pub fn test_report(&self, filter: Option<&str>) -> Result<TestReport> {
+        let cases = self.discover_tests(filter);
+        let mut results = Vec::new();
+        let mut passed = 0usize;
+        let mut failed = 0usize;
+
+        match self {
+            Self::Standalone { analyzed, .. } => {
+                let kir = kairos_ir::lower(analyzed);
+                for case in &cases {
+                    let outcome = run(&kir, Some(&case.function), &[]);
+                    match outcome {
+                        Ok(report) => {
+                            let value = report
+                                .results
+                                .first()
+                                .map(|result| result.value.clone())
+                                .unwrap_or(RuntimeValue::Null);
+                            if matches!(value, RuntimeValue::Boolean(true)) {
+                                passed += 1;
+                                results.push(TestResultRecord {
+                                    outcome: TestOutcome::Passed,
+                                    module: case.module.clone(),
+                                    function: case.function.clone(),
+                                    display_name: case.display_name.clone(),
+                                    message: "test passed".to_string(),
+                                    value: Some(value),
+                                });
+                            } else {
+                                failed += 1;
+                                results.push(TestResultRecord {
+                                    outcome: TestOutcome::Failed,
+                                    module: case.module.clone(),
+                                    function: case.function.clone(),
+                                    display_name: case.display_name.clone(),
+                                    message: "test returned false".to_string(),
+                                    value: Some(value),
+                                });
+                            }
+                        }
+                        Err(error) => {
+                            failed += 1;
+                            results.push(TestResultRecord {
+                                outcome: TestOutcome::Failed,
+                                module: case.module.clone(),
+                                function: case.function.clone(),
+                                display_name: case.display_name.clone(),
+                                message: error.to_string(),
+                                value: None,
+                            });
+                        }
+                    }
+                }
+            }
+            Self::Project { analyzed, .. } => {
+                let kir = kairos_ir::lower_project(analyzed);
+                for case in &cases {
+                    let outcome = run_project(&kir, &case.module, Some(&case.function), &[]);
+                    match outcome {
+                        Ok(report) => {
+                            let value = report
+                                .results
+                                .first()
+                                .map(|result| result.value.clone())
+                                .unwrap_or(RuntimeValue::Null);
+                            if matches!(value, RuntimeValue::Boolean(true)) {
+                                passed += 1;
+                                results.push(TestResultRecord {
+                                    outcome: TestOutcome::Passed,
+                                    module: case.module.clone(),
+                                    function: case.function.clone(),
+                                    display_name: case.display_name.clone(),
+                                    message: "test passed".to_string(),
+                                    value: Some(value),
+                                });
+                            } else {
+                                failed += 1;
+                                results.push(TestResultRecord {
+                                    outcome: TestOutcome::Failed,
+                                    module: case.module.clone(),
+                                    function: case.function.clone(),
+                                    display_name: case.display_name.clone(),
+                                    message: "test returned false".to_string(),
+                                    value: Some(value),
+                                });
+                            }
+                        }
+                        Err(error) => {
+                            failed += 1;
+                            results.push(TestResultRecord {
+                                outcome: TestOutcome::Failed,
+                                module: case.module.clone(),
+                                function: case.function.clone(),
+                                display_name: case.display_name.clone(),
+                                message: error.to_string(),
+                                value: None,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        let total = results.len();
+        Ok(TestReport {
+            status: if failed == 0 { "ok" } else { "failed" },
+            target: self.target_label(),
+            package: self.package_name().map(ToOwned::to_owned),
+            total,
+            passed,
+            failed,
+            results,
+        })
+    }
+
+    pub fn doctor_report(&self) -> DoctorReport {
+        let warnings = diagnostics_to_json(self.warnings());
+        let mut checks = Vec::new();
+        checks.push(DoctorCheck {
+            name: "workspace_load".to_string(),
+            status: DoctorStatus::Ok,
+            message: format!("loaded {} target successfully", self.target_label()),
+        });
+        checks.push(DoctorCheck {
+            name: "deterministic_mode".to_string(),
+            status: DoctorStatus::Ok,
+            message: self.mode_label().to_string(),
+        });
+
+        if let Some(entry_module) = self.entry_module() {
+            checks.push(DoctorCheck {
+                name: "entry_module".to_string(),
+                status: DoctorStatus::Ok,
+                message: format!("entry module `{entry_module}` is available"),
+            });
+        }
+
+        if self.dependency_count() > 0 {
+            checks.push(DoctorCheck {
+                name: "dependencies".to_string(),
+                status: DoctorStatus::Ok,
+                message: format!("{} direct local dependencies resolved", self.dependency_count()),
+            });
+        }
+
+        let status = if warnings.is_empty() {
+            DoctorStatus::Ok
+        } else {
+            checks.push(DoctorCheck {
+                name: "warnings".to_string(),
+                status: DoctorStatus::Warning,
+                message: format!("{} warning(s) were reported during analysis", warnings.len()),
+            });
+            DoctorStatus::Warning
+        };
+
+        DoctorReport {
+            status,
+            target: self.target_label(),
+            root: self.display_root(),
+            package: self.package_name().map(ToOwned::to_owned),
+            entry_module: self.entry_module().map(ToOwned::to_owned),
+            module_count: self.module_count(),
+            package_count: self.package_count(),
+            dependency_count: self.dependency_count(),
+            checks,
+            warnings,
+        }
+    }
+
     pub fn check_json(&self) -> Value {
         match self {
             Self::Standalone { source_hint, analyzed } => json!({
@@ -256,6 +603,8 @@ impl LoadedWorkspace {
                 "package": analyzed.project.manifest.package.name,
                 "entry_module": analyzed.project.entry_module,
                 "module_count": analyzed.project.modules.len(),
+                "package_count": analyzed.project.packages.len(),
+                "dependency_count": self.dependency_count(),
                 "focus_module": focus_module,
                 "warnings": diagnostics_to_json(&analyzed.warnings),
             }),
@@ -280,8 +629,9 @@ pub fn load_program(path: &Path) -> std::result::Result<kairos_ast::Program, Vec
 
 pub fn format_project(project: &Project, check: bool) -> Result<()> {
     let mut changed = Vec::new();
+    let root_package = project.manifest.package.name.clone();
 
-    for module in &project.modules {
+    for module in project.modules.iter().filter(|module| module.package == root_package) {
         let source = read_source(&module.path)?;
         let formatted = kairos_formatter::format_program(&module.program);
         if source != formatted {

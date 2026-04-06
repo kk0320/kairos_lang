@@ -6,6 +6,6 @@ tags ["stdlib", "string"]
 requires []
 ensures [starts_with(result, "Title:")]
 {
-  let raw = "  kairos  ";
-  return concat("Title: ", upper(trim(raw)));
+  let raw = "  kairos   platform  ";
+  return concat("Title: ", upper(normalize_space(raw)));
 }

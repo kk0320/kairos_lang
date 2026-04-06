@@ -2,7 +2,7 @@
 
 The CLI binary is named `kairos`.
 
-During local development, the most direct invocation is:
+During local development:
 
 ```powershell
 cargo run --bin kairos -- <command> ...
@@ -23,7 +23,7 @@ Kairos commands accept:
 - a project directory containing `kairos.toml`
 - a direct path to `kairos.toml`
 
-If a `.kai` file belongs to a Kairos project, project-aware commands will load the surrounding project rather than treating the file as isolated source.
+If a `.kai` file belongs to a Kairos project, project-aware commands load the surrounding project instead of treating the file as isolated source.
 
 ## Commands
 
@@ -31,18 +31,12 @@ If a `.kai` file belongs to a Kairos project, project-aware commands will load t
 
 Validate a standalone file or whole project.
 
-Examples:
-
-```powershell
-cargo run --bin kairos -- check examples\hello_context
-cargo run --bin kairos -- check examples\assistant_briefing --json
-```
-
 ### `kairos fmt <path> [--check] [--stdout]`
 
 Apply canonical formatting.
 
-- rewrites the file/project in place by default
+- rewrites the file in place by default
+- rewrites only the root package when project dependencies are present
 - `--check` fails if changes would be needed
 - `--stdout` is only valid for single-file input
 
@@ -51,7 +45,7 @@ Apply canonical formatting.
 Print AST JSON.
 
 - file input returns a single-module AST
-- project input returns the manifest plus discovered module ASTs
+- project input returns the manifest plus discovered package/module ASTs
 - `--json` is retained for compatibility; output is always JSON
 
 ### `kairos ir <path> [--json]`
@@ -59,7 +53,7 @@ Print AST JSON.
 Print stable KIR JSON.
 
 - file input returns module KIR
-- project input returns project KIR
+- project input returns project KIR with package graph and import binding data
 - `--json` is retained for compatibility; output is always JSON
 
 ### `kairos prompt <path>`
@@ -75,12 +69,24 @@ Argument parsing:
 - JSON values such as `72`, `true`, `"hello"`, `[1, 2]`, and `{"ok": true}` are accepted directly
 - bare non-JSON text is treated as a string
 
-Output modes:
-
-- default mode prints a concise human-readable execution summary
-- `--json` prints stable machine-readable execution JSON
-
 For project execution, `--function` also accepts `module.path::function_name`.
+
+### `kairos test <path> [--filter <text>] [--json]`
+
+Discover and run deterministic `test fn` cases.
+
+- standalone file input runs tests from that file
+- project input runs tests from the root package only
+- `--filter` applies a substring match to the discovered test display names
+- `--json` returns stable machine-readable results
+
+### `kairos doctor [path] [--json]`
+
+Inspect project and environment health.
+
+- with a file or project path: validates that target and summarizes package/module/dependency state
+- with no path: auto-detects the surrounding project from the current directory
+- if no project is detected, Kairos reports a warning with next steps instead of failing noisily
 
 ### `kairos shell [path]`
 
@@ -103,6 +109,8 @@ Templates:
 - `briefing`
 - `rules`
 
+Generated projects include a starter `test fn` and validate immediately.
+
 ### `kairos init [--template <template>]`
 
 Initialize the current directory as a Kairos project without overwriting existing files.
@@ -114,10 +122,16 @@ Kairos keeps machine-oriented and human-oriented output separated:
 - `check --json` returns stable status/diagnostic JSON
 - `ast` and `ir` return stable JSON
 - `run --json` returns stable execution JSON
+- `test --json` returns stable test JSON
+- `doctor --json` returns stable doctor JSON
 - shell mode stays human-oriented by default
 
-## Exit behavior
+## Example flow
 
-- parse, semantic, manifest, formatting, and runtime failures return non-zero exit codes
-- validation errors remain structured in JSON mode
-- shell mode prints terminal summaries rather than machine-oriented JSON by default
+```powershell
+cargo run --bin kairos -- check examples\package_reuse_demo --json
+cargo run --bin kairos -- test examples\package_reuse_demo
+cargo run --bin kairos -- doctor examples\package_reuse_demo
+cargo run --bin kairos -- prompt examples\package_reuse_demo
+cargo run --bin kairos -- run examples\package_reuse_demo --json
+```

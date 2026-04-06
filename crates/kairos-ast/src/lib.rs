@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Program {
     pub module: String,
+    #[serde(default)]
+    pub imports: Vec<UseDecl>,
+    #[serde(default)]
     pub uses: Vec<String>,
     pub context: Option<ContextBlock>,
     pub schemas: Vec<SchemaDecl>,
@@ -21,6 +24,10 @@ impl Program {
         self.source = source.to_owned();
         self
     }
+
+    pub fn sync_uses_from_imports(&mut self) {
+        self.uses = self.imports.iter().map(|import| import.module.clone()).collect();
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -34,8 +41,34 @@ pub struct ContextEntry {
     pub value: Expression,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Visibility {
+    Public,
+    #[default]
+    Internal,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UseDecl {
+    pub module: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alias: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<ImportItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImportItem {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alias: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SchemaDecl {
+    #[serde(default)]
+    pub visibility: Visibility,
     pub name: String,
     pub fields: Vec<FieldDecl>,
 }
@@ -48,18 +81,26 @@ pub struct FieldDecl {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EnumDecl {
+    #[serde(default)]
+    pub visibility: Visibility,
     pub name: String,
     pub variants: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TypeAliasDecl {
+    #[serde(default)]
+    pub visibility: Visibility,
     pub name: String,
     pub target: TypeRef,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FunctionDecl {
+    #[serde(default)]
+    pub visibility: Visibility,
+    #[serde(default)]
+    pub is_test: bool,
     pub name: String,
     pub params: Vec<Param>,
     pub return_type: TypeRef,
@@ -309,9 +350,36 @@ pub fn format_expression(expression: &Expression) -> String {
     rendered
 }
 
+#[must_use]
+pub fn format_use_decl(import: &UseDecl) -> String {
+    let mut rendered = format!("use {}", import.module);
+    if !import.items.is_empty() {
+        rendered.push_str("::{");
+        for (index, item) in import.items.iter().enumerate() {
+            if index > 0 {
+                rendered.push_str(", ");
+            }
+            rendered.push_str(&item.name);
+            if let Some(alias) = &item.alias {
+                rendered.push_str(" as ");
+                rendered.push_str(alias);
+            }
+        }
+        rendered.push('}');
+    } else if let Some(alias) = &import.alias {
+        rendered.push_str(" as ");
+        rendered.push_str(alias);
+    }
+    rendered.push(';');
+    rendered
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{format_expression, BinaryOperator, Expression, Literal, ObjectField, TypeRef};
+    use super::{
+        format_expression, format_use_decl, BinaryOperator, Expression, ImportItem, Literal,
+        ObjectField, TypeRef, UseDecl,
+    };
 
     #[test]
     fn renders_nested_expression_with_parentheses() {
@@ -354,5 +422,22 @@ mod tests {
         };
 
         assert_eq!(ty.to_string(), "List<Str>?");
+    }
+
+    #[test]
+    fn formats_selective_import_with_aliases() {
+        let import = UseDecl {
+            module: "demo.shared.text".to_string(),
+            alias: None,
+            items: vec![
+                ImportItem { name: "normalize".to_string(), alias: None },
+                ImportItem { name: "summarize".to_string(), alias: Some("summary".to_string()) },
+            ],
+        };
+
+        assert_eq!(
+            format_use_decl(&import),
+            "use demo.shared.text::{normalize, summarize as summary};"
+        );
     }
 }

@@ -1,0 +1,10 @@
+[package]
+name = "package_reuse_demo"
+version = "2.0.0"
+entry = "src/main.kai"
+
+[dependencies]
+shared_rules = { path = "../shared_rules_lib" }
+
+[build]
+emit = ["ast", "ir", "prompt"]

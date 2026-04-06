@@ -596,15 +596,12 @@ impl<'a> ProjectInterpreter<'a> {
             .copied()
             .ok_or_else(|| InterpreterError::new(format!("unknown module `{module}`")))?;
 
-        let imported_matches = module_program
-            .imports
-            .iter()
-            .filter(|imported_module| self.find_function(imported_module, callee).is_some())
-            .cloned()
-            .collect::<Vec<_>>();
+        let imported_matches = self.resolve_imported_function_targets(module_program, callee);
 
         match imported_matches.as_slice() {
-            [imported_module] => self.call_in_module(imported_module, callee, args),
+            [(imported_module, target_name)] => {
+                self.call_in_module(imported_module, target_name, args)
+            }
             [] => Err(InterpreterError::new(format!(
                 "unknown function `{callee}` in module `{module}`"
             ))),
@@ -612,6 +609,48 @@ impl<'a> ProjectInterpreter<'a> {
                 "ambiguous imported function `{callee}` in module `{module}`"
             ))),
         }
+    }
+
+    fn resolve_imported_function_targets(
+        &self,
+        module_program: &'a KirProgram,
+        callee: &str,
+    ) -> Vec<(&'a str, String)> {
+        if let Some((namespace, function_name)) = callee.split_once("::") {
+            return module_program
+                .import_bindings
+                .iter()
+                .filter(|binding| binding.alias.as_deref() == Some(namespace))
+                .filter_map(|binding| {
+                    self.find_function(&binding.module, function_name)
+                        .map(|_| (binding.module.as_str(), function_name.to_string()))
+                })
+                .collect();
+        }
+
+        let selective_matches = module_program
+            .import_bindings
+            .iter()
+            .flat_map(|binding| {
+                binding.items.iter().filter_map(|item| {
+                    let local_name = item.alias.as_deref().unwrap_or(&item.name);
+                    (local_name == callee
+                        && self.find_function(&binding.module, &item.name).is_some())
+                    .then_some((binding.module.as_str(), item.name.clone()))
+                })
+            })
+            .collect::<Vec<_>>();
+
+        if !selective_matches.is_empty() {
+            return selective_matches;
+        }
+
+        module_program
+            .imports
+            .iter()
+            .filter(|imported_module| self.find_function(imported_module, callee).is_some())
+            .map(|imported_module| (imported_module.as_str(), callee.to_string()))
+            .collect()
     }
 }
 
@@ -791,11 +830,65 @@ fn evaluate_builtin(callee: &str, args: &[RuntimeValue]) -> Result<Option<Runtim
             },
             _ => return Err(InterpreterError::new("`get_int` expects Object and Str")),
         },
+        "get_bool" => match args {
+            [RuntimeValue::Object(object), RuntimeValue::String(key)] => match object.get(key) {
+                Some(RuntimeValue::Boolean(value)) => RuntimeValue::Boolean(*value),
+                Some(_) => {
+                    return Err(InterpreterError::new(
+                        "`get_bool` found a non-boolean value for the requested key",
+                    ))
+                }
+                None => RuntimeValue::Null,
+            },
+            _ => return Err(InterpreterError::new("`get_bool` expects Object and Str")),
+        },
+        "get_list" => match args {
+            [RuntimeValue::Object(object), RuntimeValue::String(key)] => match object.get(key) {
+                Some(RuntimeValue::List(value)) => RuntimeValue::List(value.clone()),
+                Some(_) => {
+                    return Err(InterpreterError::new(
+                        "`get_list` found a non-list value for the requested key",
+                    ))
+                }
+                None => RuntimeValue::Null,
+            },
+            _ => return Err(InterpreterError::new("`get_list` expects Object and Str")),
+        },
+        "get_obj" => match args {
+            [RuntimeValue::Object(object), RuntimeValue::String(key)] => match object.get(key) {
+                Some(RuntimeValue::Object(value)) => RuntimeValue::Object(value.clone()),
+                Some(_) => {
+                    return Err(InterpreterError::new(
+                        "`get_obj` found a non-object value for the requested key",
+                    ))
+                }
+                None => RuntimeValue::Null,
+            },
+            _ => return Err(InterpreterError::new("`get_obj` expects Object and Str")),
+        },
         "keys" => match args {
             [RuntimeValue::Object(object)] => RuntimeValue::List(
                 object.keys().map(|key| RuntimeValue::String(key.clone())).collect(),
             ),
             _ => return Err(InterpreterError::new("`keys` expects one object")),
+        },
+        "count" => match args {
+            [RuntimeValue::List(items)] => RuntimeValue::Integer(items.len() as i64),
+            _ => return Err(InterpreterError::new("`count` expects one list")),
+        },
+        "sort" => match args {
+            [RuntimeValue::List(items)] => RuntimeValue::List(sort_runtime_values(items)?),
+            _ => return Err(InterpreterError::new("`sort` expects one list")),
+        },
+        "unique" => match args {
+            [RuntimeValue::List(items)] => RuntimeValue::List(unique_runtime_values(items)),
+            _ => return Err(InterpreterError::new("`unique` expects one list")),
+        },
+        "normalize_space" => match args {
+            [RuntimeValue::String(value)] => {
+                RuntimeValue::String(value.split_whitespace().collect::<Vec<_>>().join(" "))
+            }
+            _ => return Err(InterpreterError::new("`normalize_space` expects one string")),
         },
         "clamp" => match args {
             [RuntimeValue::Integer(value), RuntimeValue::Integer(minimum), RuntimeValue::Integer(maximum)] => {
@@ -854,6 +947,56 @@ fn bool_op(
         }
         _ => Err(InterpreterError::new("boolean operator expects Bool operands")),
     }
+}
+
+fn sort_runtime_values(items: &[RuntimeValue]) -> Result<Vec<RuntimeValue>> {
+    if items.iter().all(|item| matches!(item, RuntimeValue::Integer(_))) {
+        let mut values = items
+            .iter()
+            .map(|item| match item {
+                RuntimeValue::Integer(value) => Ok(*value),
+                _ => Err(InterpreterError::new("`sort` expects a homogeneous list")),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        values.sort();
+        return Ok(values.into_iter().map(RuntimeValue::Integer).collect());
+    }
+
+    if items.iter().all(|item| matches!(item, RuntimeValue::Float(_))) {
+        let mut values = items
+            .iter()
+            .map(|item| match item {
+                RuntimeValue::Float(value) => Ok(*value),
+                _ => Err(InterpreterError::new("`sort` expects a homogeneous list")),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        values.sort_by(f64::total_cmp);
+        return Ok(values.into_iter().map(RuntimeValue::Float).collect());
+    }
+
+    if items.iter().all(|item| matches!(item, RuntimeValue::String(_))) {
+        let mut values = items
+            .iter()
+            .map(|item| match item {
+                RuntimeValue::String(value) => Ok(value.clone()),
+                _ => Err(InterpreterError::new("`sort` expects a homogeneous list")),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        values.sort();
+        return Ok(values.into_iter().map(RuntimeValue::String).collect());
+    }
+
+    Err(InterpreterError::new("`sort` expects a homogeneous List<Int>, List<Float>, or List<Str>"))
+}
+
+fn unique_runtime_values(items: &[RuntimeValue]) -> Vec<RuntimeValue> {
+    let mut unique = Vec::new();
+    for item in items {
+        if !unique.iter().any(|existing| existing == item) {
+            unique.push(item.clone());
+        }
+    }
+    unique
 }
 
 #[cfg(test)]

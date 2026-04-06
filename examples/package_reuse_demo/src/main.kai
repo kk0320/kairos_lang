@@ -1,0 +1,31 @@
+module demo.package_reuse_demo;
+use shared.rules_lib.api as rules_api;
+use shared.rules_lib.text::{headline as library_headline};
+
+context {
+  goal: "Reuse a local Kairos package through explicit deterministic imports";
+  audience: "LLM";
+  domain: "package-reuse";
+  assumptions: [
+    "Local package reuse should stay explicit and deterministic.",
+    "Public APIs should be clearly visible at the import site.",
+  ];
+}
+
+fn main() -> Str
+describe "Render a reusable headline and classification from a local dependency"
+tags ["dependency", "reuse", "demo"]
+requires []
+ensures [len(result) > 0]
+{
+  return concat(library_headline("kairos platform"), concat(" => ", rules_api::classify(72)));
+}
+
+test fn dependency_smoke() -> Bool
+describe "Verify that the local shared_rules_lib dependency resolves and executes"
+tags ["test", "dependency"]
+requires []
+ensures [result == true]
+{
+  return rules_api::classify(72) == "MEDIUM";
+}

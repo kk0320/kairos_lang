@@ -1,7 +1,8 @@
 use std::fmt::Write as _;
 
 use kairos_ast::{
-    format_expression, Block, ElseBranch, Expression, FunctionDecl, Program, Statement,
+    format_expression, format_use_decl, Block, ElseBranch, Expression, FunctionDecl, Program,
+    Statement, Visibility,
 };
 
 const INDENT: &str = "  ";
@@ -11,8 +12,8 @@ pub fn format_program(program: &Program) -> String {
 
     let mut header = String::new();
     writeln!(header, "module {};", program.module).expect("writing to string cannot fail");
-    for import in &program.uses {
-        writeln!(header, "use {import};").expect("writing to string cannot fail");
+    for import in imports_for_formatting(program) {
+        writeln!(header, "{}", format_use_decl(&import)).expect("writing to string cannot fail");
     }
     sections.push(header.trim_end().to_string());
 
@@ -30,7 +31,8 @@ pub fn format_program(program: &Program) -> String {
 
     for schema in &program.schemas {
         let mut section = String::new();
-        writeln!(section, "schema {} {{", schema.name).expect("writing to string cannot fail");
+        writeln!(section, "{}schema {} {{", visibility_prefix(schema.visibility), schema.name)
+            .expect("writing to string cannot fail");
         for field in &schema.fields {
             writeln!(section, "{INDENT}{}: {},", field.name, field.ty)
                 .expect("writing to string cannot fail");
@@ -41,7 +43,8 @@ pub fn format_program(program: &Program) -> String {
 
     for enum_decl in &program.enums {
         let mut section = String::new();
-        writeln!(section, "enum {} {{", enum_decl.name).expect("writing to string cannot fail");
+        writeln!(section, "{}enum {} {{", visibility_prefix(enum_decl.visibility), enum_decl.name)
+            .expect("writing to string cannot fail");
         for variant in &enum_decl.variants {
             writeln!(section, "{INDENT}{variant},").expect("writing to string cannot fail");
         }
@@ -50,7 +53,12 @@ pub fn format_program(program: &Program) -> String {
     }
 
     for alias in &program.type_aliases {
-        sections.push(format!("type {} = {};", alias.name, alias.target));
+        sections.push(format!(
+            "{}type {} = {};",
+            visibility_prefix(alias.visibility),
+            alias.name,
+            alias.target
+        ));
     }
 
     for function in &program.functions {
@@ -62,9 +70,15 @@ pub fn format_program(program: &Program) -> String {
 
 fn format_function(function: &FunctionDecl) -> String {
     let mut section = String::new();
+    let mut modifiers = String::new();
+    modifiers.push_str(visibility_prefix(function.visibility));
+    if function.is_test {
+        modifiers.push_str("test ");
+    }
     writeln!(
         section,
-        "fn {}({}) -> {}",
+        "{}fn {}({}) -> {}",
+        modifiers,
         function.name,
         function
             .params
@@ -87,6 +101,29 @@ fn format_function(function: &FunctionDecl) -> String {
         .expect("writing to string cannot fail");
     write!(section, "{}", format_block(&function.body, 0)).expect("writing to string cannot fail");
     section
+}
+
+fn imports_for_formatting(program: &Program) -> Vec<kairos_ast::UseDecl> {
+    if !program.imports.is_empty() {
+        program.imports.clone()
+    } else {
+        program
+            .uses
+            .iter()
+            .map(|module| kairos_ast::UseDecl {
+                module: module.clone(),
+                alias: None,
+                items: Vec::new(),
+            })
+            .collect()
+    }
+}
+
+fn visibility_prefix(visibility: Visibility) -> &'static str {
+    match visibility {
+        Visibility::Public => "pub ",
+        Visibility::Internal => "",
+    }
 }
 
 fn format_block(block: &Block, indent_level: usize) -> String {

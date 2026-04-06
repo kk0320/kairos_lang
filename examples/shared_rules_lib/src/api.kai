@@ -1,0 +1,44 @@
+module shared.rules_lib.api;
+use shared.rules_lib.text::{headline as shared_headline};
+
+pub fn classify(score: Int) -> Str
+describe "Classify a deterministic score through the shared library API"
+tags ["library", "rules", "public"]
+requires [score >= 0, score <= 100]
+ensures [len(result) > 0]
+{
+  if score >= 80 {
+    return "HIGH";
+  } else if score >= 50 {
+    return "MEDIUM";
+  } else {
+    return "LOW";
+  }
+}
+
+pub fn heading_for(score: Int) -> Str
+describe "Return a reusable heading for a shared score report"
+tags ["library", "text", "public"]
+requires [score >= 0, score <= 100]
+ensures [len(result) > 0]
+{
+  return shared_headline(classify(score));
+}
+
+fn internal_label(score: Int) -> Str
+describe "Return an internal-only label variant"
+tags ["library", "internal"]
+requires [score >= 0, score <= 100]
+ensures [len(result) > 0]
+{
+  return concat("internal-", lower(classify(score)));
+}
+
+test fn classify_smoke() -> Bool
+describe "Verify the shared public classifier stays stable"
+tags ["test", "library"]
+requires []
+ensures [result == true]
+{
+  return classify(72) == "MEDIUM";
+}

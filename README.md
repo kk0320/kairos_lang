@@ -1,22 +1,25 @@
 # Kairos
 
-Kairos is an AI-first programming language and terminal-native toolchain for deterministic `.kai` projects.
+Kairos is an AI-first programming language and terminal-native language platform for deterministic `.kai` projects.
 
 Tagline: *Code the right answer at the right moment.*
 
-Kairos is designed for code that needs to be readable by humans, reliable for automation, and directly useful to downstream LLM systems. The language favors explicit meaning, explicit contracts, stable machine-readable outputs, and predictable project workflows over clever implicit behavior.
+Kairos is built for code that must be readable by humans, reliable for automation, and directly useful to downstream LLM systems. The language favors explicit meaning, explicit contracts, stable machine-readable outputs, and practical terminal workflows over implicit behavior.
 
-## Kairos 1.0
+## Kairos 2.0
 
-Kairos v1.0 is a release-ready local toolchain for small deterministic language projects:
+Kairos v2.0 turns the original local toolchain into a stronger language platform:
 
-- lexer, parser, AST, semantic analysis, KIR, formatter, interpreter, and CLI
+- Rust workspace with clean `build`, `test`, `fmt`, and `clippy` flows
+- lexer, parser, AST, semantics, KIR, formatter, interpreter, and CLI
 - project-aware workflows through `kairos.toml`
-- multi-file loading with deterministic module resolution through `use`
-- stable AST JSON, KIR JSON, prompt markdown, and structured diagnostics
-- interactive shell with reload and watch workflows
-- project scaffolding through `kairos new` and `kairos init`
-- bundled examples for AI context, decision logic, and stdlib usage
+- deterministic multi-file module loading and validation
+- `pub` visibility, selective imports, and import aliases
+- local path-based package reuse through `[dependencies]`
+- stable AST JSON, KIR JSON, prompt markdown, diagnostics JSON, and execution JSON
+- first-class `kairos test` and `kairos doctor`
+- interactive shell with reload, watch, and dependency introspection
+- scaffolding through `kairos new` and `kairos init`
 
 ## Why Kairos exists
 
@@ -30,38 +33,46 @@ Kairos treats source code as something that should be understandable by:
 
 Instead of hiding intent in comments or repository folklore, Kairos makes meaning explicit through:
 
-- `context` blocks
-- function-level `describe`
+- `context`
+- `describe`
 - `tags`
 - `requires`
 - `ensures`
-- deterministic project/module boundaries
+- explicit modules, packages, and deterministic imports
 
 ## Install
 
-### Local development
+### Build locally
 
 ```powershell
 cargo build --workspace
 cargo test --workspace
 ```
 
-### Local install
+### Install locally
 
 ```powershell
 cargo install --path crates/kairos-cli
 ```
 
-After that, you can run `kairos` directly from PowerShell, Windows Terminal, or the VS Code terminal.
+After that, run `kairos` directly from PowerShell, Windows Terminal, or the VS Code terminal.
 
 ## Quick start
 
-The fastest way to explore Kairos is to use a bundled example:
+The fastest way to explore Kairos is to use a bundled project:
 
 ```powershell
 cargo run --bin kairos -- check examples\assistant_briefing
 cargo run --bin kairos -- prompt examples\assistant_briefing
 cargo run --bin kairos -- shell examples\assistant_briefing
+```
+
+If you want to see local package reuse and tests:
+
+```powershell
+cargo run --bin kairos -- check examples\package_reuse_demo --json
+cargo run --bin kairos -- test examples\package_reuse_demo
+cargo run --bin kairos -- doctor examples\package_reuse_demo
 ```
 
 If you want the smallest first example:
@@ -79,10 +90,10 @@ Kairos includes a line-oriented interactive shell:
 cargo run --bin kairos -- shell examples\assistant_briefing
 ```
 
-The shell shows a Kairos startup banner, version, current mode, project metadata, and quick-start commands before presenting the prompt.
+The shell shows a Kairos startup banner, current mode, package/module metadata, and quick-start commands before presenting the prompt.
 
 <p align="center">
-  <img src="assets/images/kairos-shell-v1.0.png" alt="Kairos 1.0 shell screenshot" width="900">
+  <img src="assets/images/kairos-shell-v2.0.png" alt="Kairos shell screenshot" width="900">
 </p>
 
 Useful shell commands:
@@ -90,6 +101,7 @@ Useful shell commands:
 - `:help`
 - `:status`
 - `:modules`
+- `:deps`
 - `:check`
 - `:prompt`
 - `:run main`
@@ -98,16 +110,18 @@ Useful shell commands:
 - `:unwatch`
 - `:quit`
 
-The shell is human-oriented, but it still calls the real project loader, parser, semantic analyzer, KIR lowering, and interpreter. It is not a toy mode layered on top of fake summaries.
+The shell is not a fake demo mode. It calls the real project loader, parser, semantic analyzer, KIR lowering, prompt renderer, and deterministic interpreter.
 
 ## Create a project
 
 ```powershell
 cargo run --bin kairos -- new demo_project
-cargo run --bin kairos -- new briefing_demo --template briefing
+cargo run --bin kairos -- new rules_demo --template rules
 
 Set-Location .\demo_project
 cargo run --bin kairos -- check .
+cargo run --bin kairos -- test .
+cargo run --bin kairos -- doctor .
 cargo run --bin kairos -- shell .
 ```
 
@@ -115,7 +129,7 @@ Or initialize the current directory:
 
 ```powershell
 cargo run --bin kairos -- init
-cargo run --bin kairos -- init --template rules
+cargo run --bin kairos -- init --template briefing
 ```
 
 Available templates:
@@ -124,11 +138,11 @@ Available templates:
 - `briefing`
 - `rules`
 
-Generated projects validate immediately and avoid overwriting existing files.
+Generated projects validate immediately and now include a starter Kairos-native test.
 
 ## Core CLI
 
-Kairos 1.0 keeps the command surface focused:
+Kairos 2.0 keeps the command surface focused:
 
 - `kairos check <file-or-project> [--json]`
 - `kairos fmt <file-or-project> [--check] [--stdout]`
@@ -136,11 +150,13 @@ Kairos 1.0 keeps the command surface focused:
 - `kairos ir <file-or-project> [--json]`
 - `kairos prompt <file-or-project>`
 - `kairos run <file-or-project> [--function <name>] [--arg <value> ...] [--json]`
+- `kairos test <file-or-project> [--filter <text>] [--json]`
+- `kairos doctor [path] [--json]`
 - `kairos shell [path]`
 - `kairos new <name> [--template <template>]`
 - `kairos init [--template <template>]`
 
-Machine-readable commands remain quiet and stable in JSON mode. Human-readable flows such as `shell`, `check`, and default `run` output are intentionally optimized for terminal use.
+Machine-readable commands stay quiet and stable in JSON mode. Human-readable flows such as `shell`, `check`, `doctor`, `test`, and default `run` output are optimized for terminal use.
 
 ## Project model
 
@@ -148,9 +164,12 @@ Kairos projects are rooted by `kairos.toml`:
 
 ```toml
 [package]
-name = "assistant_briefing"
-version = "1.0.0"
+name = "package_reuse_demo"
+version = "2.0.0"
 entry = "src/main.kai"
+
+[dependencies]
+shared_rules = { path = "../shared_rules_lib" }
 
 [build]
 emit = ["ast", "ir", "prompt"]
@@ -159,10 +178,28 @@ emit = ["ast", "ir", "prompt"]
 Current rules:
 
 - `package.entry` must point to a relative `.kai` file inside the project
-- the parent directory of `package.entry` is treated as the project source root
+- the parent directory of `package.entry` is treated as the package source root
 - every `.kai` file under that source root is loaded deterministically
-- modules are resolved by explicit `module` declarations and imported with `use`
-- unresolved imports, duplicate module names, and import cycles are hard errors
+- local dependencies are path-based only and stay fully local
+- modules are resolved by explicit `module` declarations and imported with explicit `use`
+- unresolved imports, duplicate modules, dependency cycles, and invalid package boundaries are hard errors
+
+## Example import forms
+
+```kai
+module demo.package_reuse_demo;
+use shared.rules_lib.api as rules_api;
+use shared.rules_lib.text::{headline as library_headline};
+
+fn main() -> Str
+describe "Reuse a local package through explicit imports"
+tags ["dependency", "demo"]
+requires []
+ensures [len(result) > 0]
+{
+  return concat(library_headline("kairos platform"), concat(" => ", rules_api::classify(72)));
+}
+```
 
 ## Deterministic outputs
 
@@ -172,7 +209,9 @@ Kairos emits stable artifacts for downstream tooling:
 - KIR JSON for normalized machine-facing structure
 - prompt markdown for system/context generation
 - structured diagnostics with severity, code, message, location, and related notes
-- deterministic interpreter execution reports
+- deterministic execution reports
+- deterministic test reports
+- deterministic doctor reports
 
 ## Bundled examples
 
@@ -180,8 +219,10 @@ Kairos emits stable artifacts for downstream tooling:
 - `examples/video_context`: context + type declarations + prompt export
 - `examples/risk_rules`: deterministic rule execution in one file
 - `examples/assistant_briefing`: multi-file AI-context project
-- `examples/decision_bundle`: multi-file decision/rules project
+- `examples/decision_bundle`: multi-file decision/rules project with Kairos-native tests
 - `examples/stdlib_playbook`: multi-file stdlib showcase
+- `examples/shared_rules_lib`: reusable local package with explicit public APIs
+- `examples/package_reuse_demo`: local dependency reuse with alias and selective import forms
 
 ## Validation
 
@@ -195,17 +236,17 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 These commands pass in the current repository state.
 
-## What Kairos intentionally does not do in 1.0
+## Intentional limits in 2.0
 
-Kairos 1.0 stays focused:
+Kairos 2.0 is still deliberately focused:
 
-- no package registry or remote dependency model
-- no selective imports, aliasing, or visibility modifiers yet
+- no remote package registry or networked dependency installation
 - no user-program networking, file I/O, randomness, wall-clock time, or async runtime
-- no full-screen TUI or editor/LSP layer yet
-- no attempt to be an unrestricted general-purpose OS scripting language
+- no full-screen TUI or editor/LSP layer
+- no general-purpose OS scripting ambition
+- no advanced macro system or non-deterministic runtime features by default
 
-This narrow scope is deliberate. Kairos is strongest when it stays deterministic, explicit, and reviewable.
+This narrow scope is deliberate. Kairos is strongest when it stays explicit, deterministic, and scriptable for both humans and AI systems.
 
 ## Documentation
 
@@ -219,6 +260,7 @@ This narrow scope is deliberate. Kairos is strongest when it stays deterministic
 - [docs/syntax.md](docs/syntax.md)
 - [specs/kairos.ebnf](specs/kairos.ebnf)
 - [specs/kairos-ir.schema.json](specs/kairos-ir.schema.json)
+- [specs/stdlib.md](specs/stdlib.md)
 
 ## License
 

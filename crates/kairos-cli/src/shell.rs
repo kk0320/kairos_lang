@@ -14,8 +14,8 @@ use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::{
     presentation::{
-        clear_screen_sequence, render_execution_report, render_module_list, render_shell_banner,
-        render_shell_help, render_shell_status, ShellSnapshot,
+        clear_screen_sequence, render_dependency_list, render_execution_report, render_module_list,
+        render_shell_banner, render_shell_help, render_shell_status, ShellSnapshot,
     },
     workspace::{
         diagnostics_to_anyhow, normalize_display_path, parse_runtime_value, print_json,
@@ -69,6 +69,7 @@ enum ShellCommand {
     Prompt(Option<String>),
     Run { function: Option<String>, args: Vec<String> },
     Modules,
+    Deps,
     Reload,
     Watch,
     Unwatch,
@@ -200,6 +201,10 @@ impl ShellSession {
                 let records = self.module_records()?;
                 println!("{}", render_module_list(&records));
             }
+            ShellCommand::Deps => {
+                let records = self.dependency_records()?;
+                println!("{}", render_dependency_list(&records));
+            }
             ShellCommand::Reload => {
                 self.reload_current("reloaded")?;
             }
@@ -255,6 +260,13 @@ impl ShellSession {
         let workspace =
             state.workspace.as_ref().context("no Kairos project or file is currently loaded")?;
         Ok(workspace.module_records())
+    }
+
+    fn dependency_records(&self) -> Result<Vec<crate::workspace::DependencyRecord>> {
+        let state = self.state.lock().expect("shell state should lock");
+        let workspace =
+            state.workspace.as_ref().context("no Kairos project or file is currently loaded")?;
+        Ok(workspace.dependency_records())
     }
 
     fn reload_current(&mut self, verb: &str) -> Result<()> {
@@ -385,6 +397,8 @@ impl ShellState {
                 package: workspace.package_name().map(ToOwned::to_owned),
                 entry: workspace.entry_module().map(ToOwned::to_owned),
                 modules: Some(workspace.module_count()),
+                packages: Some(workspace.package_count()),
+                dependencies: Some(workspace.dependency_count()),
                 focus: workspace.focus_module().map(ToOwned::to_owned),
                 watch: self.watch_status.clone(),
             },
@@ -395,6 +409,8 @@ impl ShellState {
                 package: None,
                 entry: None,
                 modules: None,
+                packages: None,
+                dependencies: None,
                 focus: None,
                 watch: self.watch_status.clone(),
             },
@@ -457,6 +473,7 @@ fn parse_shell_command(input: &str) -> Result<ShellCommand> {
             args: args.iter().skip(1).cloned().collect(),
         }),
         "modules" if args.is_empty() => Ok(ShellCommand::Modules),
+        "deps" if args.is_empty() => Ok(ShellCommand::Deps),
         "reload" if args.is_empty() => Ok(ShellCommand::Reload),
         "watch" if args.is_empty() => Ok(ShellCommand::Watch),
         "unwatch" if args.is_empty() => Ok(ShellCommand::Unwatch),

@@ -13,8 +13,11 @@
     "program": {
       "type": "object",
       "required": [
+        "package",
         "module",
+        "relative_path",
         "imports",
+        "import_bindings",
         "context",
         "schemas",
         "enums",
@@ -23,13 +26,25 @@
         "source_hash"
       ],
       "properties": {
+        "package": {
+          "type": "string"
+        },
         "module": {
+          "type": "string"
+        },
+        "relative_path": {
           "type": "string"
         },
         "imports": {
           "type": "array",
           "items": {
             "type": "string"
+          }
+        },
+        "import_bindings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/import_binding"
           }
         },
         "context": {
@@ -69,12 +84,19 @@
       "type": "object",
       "required": [
         "package",
+        "packages",
         "modules",
         "source_hash"
       ],
       "properties": {
         "package": {
           "$ref": "#/$defs/package"
+        },
+        "packages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/package_node"
+          }
         },
         "modules": {
           "type": "array",
@@ -94,7 +116,8 @@
         "version",
         "entry_file",
         "entry_module",
-        "emit"
+        "emit",
+        "dependencies"
       ],
       "properties": {
         "name": {
@@ -114,16 +137,127 @@
           "items": {
             "type": "string"
           }
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/package_dependency"
+          }
         }
       }
+    },
+    "package_node": {
+      "type": "object",
+      "required": [
+        "name",
+        "version",
+        "entry_file",
+        "entry_module",
+        "is_root",
+        "dependencies"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "entry_file": {
+          "type": "string"
+        },
+        "entry_module": {
+          "type": "string"
+        },
+        "is_root": {
+          "type": "boolean"
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/package_dependency"
+          }
+        }
+      }
+    },
+    "package_dependency": {
+      "type": "object",
+      "required": [
+        "alias",
+        "package",
+        "path"
+      ],
+      "properties": {
+        "alias": {
+          "type": "string"
+        },
+        "package": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "import_binding": {
+      "type": "object",
+      "required": [
+        "module",
+        "items"
+      ],
+      "properties": {
+        "module": {
+          "type": "string"
+        },
+        "alias": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/import_item"
+          }
+        }
+      }
+    },
+    "import_item": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "alias": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "visibility": {
+      "type": "string",
+      "enum": [
+        "public",
+        "internal"
+      ]
     },
     "schema": {
       "type": "object",
       "required": [
+        "visibility",
         "name",
         "fields"
       ],
       "properties": {
+        "visibility": {
+          "$ref": "#/$defs/visibility"
+        },
         "name": {
           "type": "string"
         },
@@ -153,10 +287,14 @@
     "enum": {
       "type": "object",
       "required": [
+        "visibility",
         "name",
         "variants"
       ],
       "properties": {
+        "visibility": {
+          "$ref": "#/$defs/visibility"
+        },
         "name": {
           "type": "string"
         },
@@ -171,10 +309,14 @@
     "type_alias": {
       "type": "object",
       "required": [
+        "visibility",
         "name",
         "target"
       ],
       "properties": {
+        "visibility": {
+          "$ref": "#/$defs/visibility"
+        },
         "name": {
           "type": "string"
         },
@@ -186,6 +328,8 @@
     "function": {
       "type": "object",
       "required": [
+        "visibility",
+        "is_test",
         "name",
         "return_type",
         "params",
@@ -193,6 +337,12 @@
         "body"
       ],
       "properties": {
+        "visibility": {
+          "$ref": "#/$defs/visibility"
+        },
+        "is_test": {
+          "type": "boolean"
+        },
         "name": {
           "type": "string"
         },

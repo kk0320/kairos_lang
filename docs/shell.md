@@ -18,12 +18,14 @@ Kairos prints a branded startup banner and operational summary before showing th
 ```text
 AI-first programming language shell
 
-version: v1.0.0
+version: v2.0.0
 mode: project-aware | deterministic
 source: project
 project: assistant_briefing
 entry: demo.assistant_briefing
 modules: 3
+packages: 1
+dependencies: 0
 root: C:/.../examples/assistant_briefing
 watch: off
 
@@ -34,6 +36,7 @@ Tips:
 :run main
 :ir
 :modules
+:deps
 :prompt
 :reload
 :watch
@@ -48,7 +51,7 @@ kairos>
 - `:help`
   Show shell help.
 - `:status`
-  Show the current mode, source, root, package, entry module, module count, and watch state.
+  Show the current mode, source, root, package, entry module, module count, package count, dependency count, and watch state.
 - `:load <path>`
   Load a project, manifest, or `.kai` file into the current session.
 - `:check`
@@ -63,6 +66,8 @@ kairos>
   Run the current target with optional function and arguments.
 - `:modules`
   List loaded modules and mark entry/focus modules.
+- `:deps`
+  List direct local dependencies for the loaded root package.
 - `:reload`
   Reload the current file/project from disk and revalidate it.
 - `:watch`
@@ -74,7 +79,7 @@ kairos>
 - `:quit`
   Exit the shell.
 
-Selectors for `:ast`, `:ir`, and `:prompt` are exact module names or exact relative paths inside the project.
+Selectors for `:ast`, `:ir`, and `:prompt` are exact module names or exact relative paths inside the loaded workspace.
 
 ## `:run` behavior
 
@@ -87,21 +92,21 @@ Argument parsing follows the same rules as `kairos run`:
 
 ## Reload and watch
 
-` :reload`:
+`:reload`:
 
 - reloads the current project or file from disk
-- re-runs parsing, project resolution, and semantic validation
+- re-runs parsing, package/module resolution, and semantic validation
 - keeps the shell session alive
 - prints a success/failure summary
 
-` :watch`:
+`:watch`:
 
 - watches the current project root recursively, or the current file directory for standalone files
 - reloads and revalidates on `.kai` or `kairos.toml` changes
 - keeps watch state only for the current shell session
 - does not auto-run entry functions by default
 
-` :unwatch` stops the active watcher cleanly.
+`:unwatch` stops the active watcher cleanly.
 
 ## Example session
 
@@ -110,32 +115,22 @@ kairos> :status
 Kairos shell status
 - mode: project-aware | deterministic
 - source: project
-- project: decision_bundle
-- entry: demo.decision_bundle
-- modules: 3
-- root: C:/.../examples/decision_bundle
+- project: package_reuse_demo
+- entry: demo.package_reuse_demo
+- modules: 4
+- packages: 2
+- dependencies: 1
+- root: C:/.../examples/package_reuse_demo
 - watch: off
 
-kairos> :modules
-Loaded modules
-- demo.decision_bundle [entry, focus] -> src/main.kai
-- demo.decision_bundle.labels -> src/labels.kai
-- demo.decision_bundle.scoring -> src/scoring.kai
+kairos> :deps
+Direct dependencies
+- shared_rules -> shared_rules_lib (../shared_rules_lib)
 
-kairos> :prompt
-# Kairos Project Context
-...
-
-kairos> :run classify 72
+kairos> :run main
 Kairos execution report
-- module: demo.decision_bundle
-- classify => "MEDIUM"
-
-kairos> :reload
-OK: reloaded project `decision_bundle` (entry: demo.decision_bundle, modules: 3, warnings: 0)
-
-kairos> :watch
-Watch mode enabled.
+- module: demo.package_reuse_demo
+- main => "Shared: KAIROS PLATFORM => MEDIUM"
 ```
 
 ## Current limitations

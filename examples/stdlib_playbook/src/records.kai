@@ -15,5 +15,14 @@ tags ["stdlib", "object", "keys"]
 requires []
 ensures [len(result) > 0]
 {
-  return join(keys(sample_catalog()), ",");
+  return join(sort(keys(sample_catalog())), ",");
+}
+
+fn stable_key_count() -> Int
+describe "Count the stable object keys with the v2 stdlib"
+tags ["stdlib", "count"]
+requires []
+ensures [result == 3]
+{
+  return count(keys(sample_catalog()));
 }

@@ -1,6 +1,6 @@
 # Kairos Deterministic Standard Library
 
-Kairos 1.0 includes a deliberately small builtin library aimed at AI-first scripting, prompt shaping, and rule evaluation.
+Kairos 2.0 includes a deliberately small builtin library aimed at AI-first scripting, prompt shaping, validation, and deterministic rule evaluation.
 
 ## String
 
@@ -12,15 +12,19 @@ Kairos 1.0 includes a deliberately small builtin library aimed at AI-first scrip
 - `trim(Str) -> Str`
 - `upper(Str) -> Str`
 - `lower(Str) -> Str`
+- `normalize_space(Str) -> Str`
 
 ## List
 
 - `len(List<T>) -> Int`
+- `count(List<T>) -> Int`
 - `join(List<Str>, Str) -> Str`
 - `first(List<T>) -> T?`
 - `last(List<T>) -> T?`
 - `all(List<Bool>) -> Bool`
 - `any(List<Bool>) -> Bool`
+- `sort(List<Int|Float|Str>) -> List<_>`
+- `unique(List<T>) -> List<T>`
 
 ## Object
 
@@ -28,6 +32,9 @@ Kairos 1.0 includes a deliberately small builtin library aimed at AI-first scrip
 - `has_key(Object, Str) -> Bool`
 - `get_str(Object, Str) -> Str?`
 - `get_int(Object, Str) -> Int?`
+- `get_bool(Object, Str) -> Bool?`
+- `get_list(Object, Str) -> List<Any>?`
+- `get_obj(Object, Str) -> Object?`
 - `keys(Object) -> List<Str>`
 
 ## Numeric
@@ -39,7 +46,7 @@ Kairos 1.0 includes a deliberately small builtin library aimed at AI-first scrip
 
 ## Design limits
 
-Kairos 1.0 intentionally does not include builtin support for:
+Kairos 2.0 intentionally does not include builtin support for:
 
 - filesystem access
 - networking

@@ -1,0 +1,21 @@
+module shared.rules_lib;
+use shared.rules_lib.api::{classify};
+
+context {
+  goal: "Provide reusable deterministic decision helpers to local Kairos packages";
+  audience: "LLM";
+  domain: "shared-rules";
+  assumptions: [
+    "Public APIs should be explicit.",
+    "Local dependencies should stay deterministic.",
+  ];
+}
+
+fn main() -> Str
+describe "Return the shared library sample classification"
+tags ["library", "shared", "entry"]
+requires []
+ensures [len(result) > 0]
+{
+  return classify(72);
+}

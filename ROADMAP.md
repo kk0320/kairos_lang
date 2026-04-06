@@ -1,18 +1,20 @@
 # Kairos Roadmap
 
-## Current state: v1.0
+## Current state: v2.0
 
-Kairos 1.0 is the first release-ready public baseline.
+Kairos 2.0 is the current language-platform baseline.
 
-Completed in 1.0:
+Completed in 2.0:
 
 - Rust workspace with clean build/test/fmt/clippy flows
 - `.kai` parsing, AST, semantics, KIR, formatter, and deterministic interpreter
 - project-aware workflows through `kairos.toml`
-- deterministic multi-file module loading with `use`
+- deterministic multi-file module loading
+- `pub` visibility, selective imports, and module aliases
+- local path-based package reuse through `[dependencies]`
 - structured diagnostics
-- stable AST JSON, KIR JSON, prompt markdown, and execution JSON outputs
-- terminal-native shell with reload and watch
+- stable AST JSON, KIR JSON, prompt markdown, execution JSON, test JSON, and doctor JSON
+- terminal-native shell with reload, watch, and dependency introspection
 - local project scaffolding through `kairos new` and `kairos init`
 - bundled examples and public-facing documentation
 
@@ -35,25 +37,30 @@ Completed in 1.0:
 - scaffolding templates
 - terminal presentation layer
 
-## Post-1.0 priorities
+### v1.0
 
-### v1.1 candidates
+- release-ready local toolchain baseline
+- installability, public docs, and 1.0 command/help polish
+
+## Post-2.0 priorities
+
+### v2.1 candidates
 
 - richer semantic spans and source-mapped diagnostics
-- snapshot/golden coverage for AST, KIR, and diagnostics stability
-- shell session history and a few quality-of-life shell improvements
-- more explicit manifest/schema documentation
+- more explicit visibility diagnostics and import suggestions
+- package graph visualization and lightweight generated docs
+- broader golden/snapshot protection for AST, KIR, diagnostics, test, and doctor output
 
-### v1.2 candidates
+### v2.2 candidates
 
-- selective imports and explicit visibility rules
-- clearer object/record type modeling
-- machine-readable diagnostic schema documentation
+- selective import filtering in `kairos test`
+- shell session history
 - additional deterministic validation-focused stdlib helpers
+- richer record/schema ergonomics
 
-## Deliberately out of scope after 1.0 unless product direction changes
+## Deliberately out of scope after 2.0 unless product direction changes
 
-- package registry
+- remote registry
 - remote imports
 - async runtime
 - networking
@@ -63,4 +70,4 @@ Completed in 1.0:
 - macro-heavy metaprogramming
 - broad non-deterministic runtime features
 
-Kairos should grow by sharpening its AI-first deterministic strengths, not by becoming an unfocused general-purpose toolchain all at once.
+Kairos should keep growing by sharpening its AI-first deterministic strengths, not by becoming an unfocused general-purpose toolchain all at once.

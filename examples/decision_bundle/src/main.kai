@@ -30,3 +30,12 @@ ensures [len(result) > 0]
 {
   return classify(72);
 }
+
+test fn classify_medium_case() -> Bool
+describe "Verify that the bundled sample score maps to MEDIUM"
+tags ["test", "rules"]
+requires []
+ensures [result == true]
+{
+  return classify(72) == "MEDIUM";
+}

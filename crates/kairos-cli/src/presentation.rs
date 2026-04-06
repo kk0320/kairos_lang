@@ -2,7 +2,10 @@ use std::fmt::Write;
 
 use kairos_interpreter::{ExecutionReport, RuntimeValue};
 
-use crate::workspace::ModuleRecord;
+use crate::workspace::{
+    DependencyRecord, DoctorCheck, DoctorReport, DoctorStatus, ModuleRecord, TestOutcome,
+    TestReport,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellSnapshot {
@@ -12,6 +15,8 @@ pub struct ShellSnapshot {
     pub package: Option<String>,
     pub entry: Option<String>,
     pub modules: Option<usize>,
+    pub packages: Option<usize>,
+    pub dependencies: Option<usize>,
     pub focus: Option<String>,
     pub watch: String,
 }
@@ -38,6 +43,12 @@ pub fn render_shell_banner(version: &str, snapshot: &ShellSnapshot) -> String {
     if let Some(modules) = snapshot.modules {
         output.push_str(&format!("modules: {modules}\n"));
     }
+    if let Some(packages) = snapshot.packages {
+        output.push_str(&format!("packages: {packages}\n"));
+    }
+    if let Some(dependencies) = snapshot.dependencies {
+        output.push_str(&format!("dependencies: {dependencies}\n"));
+    }
     if let Some(focus) = &snapshot.focus {
         output.push_str(&format!("focus: {focus}\n"));
     }
@@ -51,6 +62,7 @@ pub fn render_shell_banner(version: &str, snapshot: &ShellSnapshot) -> String {
     output.push_str(":run main\n");
     output.push_str(":ir\n");
     output.push_str(":modules\n");
+    output.push_str(":deps\n");
     output.push_str(":prompt\n");
     output.push_str(":reload\n");
     output.push_str(":watch\n");
@@ -70,6 +82,7 @@ pub fn render_shell_help() -> &'static str {
 :prompt [selector]         Print prompt context for the current target or selected module\n\
 :run [function] [args...]  Run the current target with optional function and args\n\
 :modules                   List loaded modules\n\
+:deps                      List direct local dependencies for the loaded project\n\
 :reload                    Reload the current target from disk\n\
 :watch                     Start session watch mode\n\
 :unwatch                   Stop session watch mode\n\
@@ -100,6 +113,12 @@ pub fn render_shell_status(snapshot: &ShellSnapshot) -> String {
     if let Some(modules) = snapshot.modules {
         output.push_str(&format!("- modules: {modules}\n"));
     }
+    if let Some(packages) = snapshot.packages {
+        output.push_str(&format!("- packages: {packages}\n"));
+    }
+    if let Some(dependencies) = snapshot.dependencies {
+        output.push_str(&format!("- dependencies: {dependencies}\n"));
+    }
     if let Some(focus) = &snapshot.focus {
         output.push_str(&format!("- focus: {focus}\n"));
     }
@@ -124,7 +143,26 @@ pub fn render_module_list(records: &[ModuleRecord]) -> String {
         }
         let marker_text =
             if markers.is_empty() { String::new() } else { format!(" [{}]", markers.join(", ")) };
-        lines.push(format!("- {}{} -> {}", record.module, marker_text, record.relative_path));
+        if let Some(package) = &record.package {
+            lines.push(format!(
+                "- {}{} -> {} (package: {})",
+                record.module, marker_text, record.relative_path, package
+            ));
+        } else {
+            lines.push(format!("- {}{} -> {}", record.module, marker_text, record.relative_path));
+        }
+    }
+    lines.join("\n")
+}
+
+pub fn render_dependency_list(records: &[DependencyRecord]) -> String {
+    if records.is_empty() {
+        return "No direct local dependencies are loaded.".to_string();
+    }
+
+    let mut lines = vec!["Direct dependencies".to_string()];
+    for record in records {
+        lines.push(format!("- {} -> {} ({})", record.alias, record.package, record.path));
     }
     lines.join("\n")
 }
@@ -152,6 +190,81 @@ pub fn render_execution_report(report: &ExecutionReport) -> String {
 
     output.pop();
     output
+}
+
+pub fn render_test_report(report: &TestReport) -> String {
+    let mut output = String::new();
+    output.push_str("Kairos test report\n");
+    output.push_str(&format!("- target: {}\n", report.target));
+    if let Some(package) = &report.package {
+        output.push_str(&format!("- package: {package}\n"));
+    }
+    output.push_str(&format!(
+        "- total: {} | passed: {} | failed: {}\n",
+        report.total, report.passed, report.failed
+    ));
+    if report.results.is_empty() {
+        output.push_str("- results: none");
+        return output;
+    }
+
+    for result in &report.results {
+        let outcome = match result.outcome {
+            TestOutcome::Passed => "PASS",
+            TestOutcome::Failed => "FAIL",
+        };
+        output.push_str(&format!("- [{outcome}] {} ({})", result.display_name, result.message));
+        if let Some(value) = &result.value {
+            output.push_str(&format!(" => {}", render_runtime_value(value)));
+        }
+        output.push('\n');
+    }
+    output.pop();
+    output
+}
+
+pub fn render_doctor_report(report: &DoctorReport) -> String {
+    let mut output = String::new();
+    output.push_str("Kairos doctor report\n");
+    output.push_str(&format!("- status: {}\n", doctor_status_label(&report.status)));
+    output.push_str(&format!("- target: {}\n", report.target));
+    output.push_str(&format!("- root: {}\n", report.root));
+    if let Some(package) = &report.package {
+        output.push_str(&format!("- package: {package}\n"));
+    }
+    if let Some(entry_module) = &report.entry_module {
+        output.push_str(&format!("- entry_module: {entry_module}\n"));
+    }
+    output.push_str(&format!(
+        "- package_count: {} | module_count: {} | dependency_count: {}\n",
+        report.package_count, report.module_count, report.dependency_count
+    ));
+    output.push_str("Checks:\n");
+    for check in &report.checks {
+        output.push_str(&format!(
+            "- [{}] {}\n",
+            doctor_status_label(&check.status),
+            render_check(check)
+        ));
+    }
+    if !report.warnings.is_empty() {
+        output.push_str("Warnings:\n");
+        for warning in &report.warnings {
+            output.push_str(&format!("- {}\n", warning["message"].as_str().unwrap_or("warning")));
+        }
+    }
+    output.trim_end().to_string()
+}
+
+fn render_check(check: &DoctorCheck) -> String {
+    format!("{}: {}", check.name, check.message)
+}
+
+fn doctor_status_label(status: &DoctorStatus) -> &'static str {
+    match status {
+        DoctorStatus::Ok => "ok",
+        DoctorStatus::Warning => "warning",
+    }
 }
 
 fn render_runtime_value(value: &RuntimeValue) -> String {
@@ -196,11 +309,13 @@ mod tests {
             package: Some("assistant_briefing".to_string()),
             entry: Some("demo.assistant_briefing".to_string()),
             modules: Some(3),
+            packages: Some(1),
+            dependencies: Some(0),
             focus: Some("demo.assistant_briefing".to_string()),
             watch: "off".to_string(),
         };
 
-        let banner = render_shell_banner("1.0.0", &snapshot);
+        let banner = render_shell_banner("2.0.0", &snapshot);
         assert!(banner.contains("KAIROS") || banner.contains("_  __"));
         assert!(banner.contains("assistant_briefing"));
         assert!(banner.contains("demo.assistant_briefing"));
@@ -215,6 +330,8 @@ mod tests {
             package: None,
             entry: None,
             modules: None,
+            packages: None,
+            dependencies: None,
             focus: None,
             watch: "off".to_string(),
         };
@@ -228,12 +345,14 @@ mod tests {
     fn module_list_marks_entry_and_focus() {
         let rendered = render_module_list(&[
             ModuleRecord {
+                package: Some("demo".to_string()),
                 module: "demo.main".to_string(),
                 relative_path: "src/main.kai".to_string(),
                 is_entry: true,
                 is_focus: true,
             },
             ModuleRecord {
+                package: Some("demo".to_string()),
                 module: "demo.shared".to_string(),
                 relative_path: "src/shared.kai".to_string(),
                 is_entry: false,

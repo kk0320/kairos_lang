@@ -5,7 +5,7 @@ use std::{
 
 use kairos_ast::{
     format_expression, BinaryOperator, ElseBranch, Expression, FieldDecl, Literal, Program,
-    Statement, TypeRef,
+    Statement, TypeRef, Visibility,
 };
 use kairos_project::AnalyzedProject;
 use kairos_semantic::AnalyzedProgram;
@@ -15,8 +15,12 @@ use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KirProgram {
+    pub package: String,
     pub module: String,
+    pub relative_path: String,
     pub imports: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub import_bindings: Vec<KirImportBinding>,
     pub context: BTreeMap<String, Value>,
     pub schemas: Vec<KirSchema>,
     pub enums: Vec<KirEnum>,
@@ -28,6 +32,8 @@ pub struct KirProgram {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KirProject {
     pub package: KirPackage,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub packages: Vec<KirPackageNode>,
     pub modules: Vec<KirProgram>,
     pub source_hash: String,
 }
@@ -39,10 +45,47 @@ pub struct KirPackage {
     pub entry_file: String,
     pub entry_module: String,
     pub emit: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<KirPackageDependency>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KirPackageNode {
+    pub name: String,
+    pub version: String,
+    pub entry_file: String,
+    pub entry_module: String,
+    pub is_root: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<KirPackageDependency>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KirPackageDependency {
+    pub alias: String,
+    pub package: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KirImportBinding {
+    pub module: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alias: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<KirImportItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KirImportItem {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alias: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KirSchema {
+    pub visibility: KirVisibility,
     pub name: String,
     pub fields: Vec<KirField>,
 }
@@ -56,18 +99,22 @@ pub struct KirField {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KirEnum {
+    pub visibility: KirVisibility,
     pub name: String,
     pub variants: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KirTypeAlias {
+    pub visibility: KirVisibility,
     pub name: String,
     pub target: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KirFunction {
+    pub visibility: KirVisibility,
+    pub is_test: bool,
     pub name: String,
     #[serde(rename = "return_type")]
     pub return_type: String,
@@ -162,17 +209,51 @@ pub enum KirBinaryOperator {
     Or,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KirVisibility {
+    Public,
+    Internal,
+}
+
 pub fn lower(analyzed: &AnalyzedProgram) -> KirProgram {
+    lower_program_with_context(analyzed, "", "")
+}
+
+fn lower_program_with_context(
+    analyzed: &AnalyzedProgram,
+    package: &str,
+    relative_path: &str,
+) -> KirProgram {
     let program = &analyzed.program;
 
     KirProgram {
+        package: package.to_string(),
         module: program.module.clone(),
+        relative_path: relative_path.to_string(),
         imports: program.uses.clone(),
+        import_bindings: program
+            .imports
+            .iter()
+            .map(|import| KirImportBinding {
+                module: import.module.clone(),
+                alias: import.alias.clone(),
+                items: import
+                    .items
+                    .iter()
+                    .map(|item| KirImportItem {
+                        name: item.name.clone(),
+                        alias: item.alias.clone(),
+                    })
+                    .collect(),
+            })
+            .collect(),
         context: lower_context(program),
         schemas: program
             .schemas
             .iter()
             .map(|schema| KirSchema {
+                visibility: lower_visibility(schema.visibility),
                 name: schema.name.clone(),
                 fields: schema
                     .fields
@@ -188,6 +269,7 @@ pub fn lower(analyzed: &AnalyzedProgram) -> KirProgram {
             .enums
             .iter()
             .map(|enum_decl| KirEnum {
+                visibility: lower_visibility(enum_decl.visibility),
                 name: enum_decl.name.clone(),
                 variants: enum_decl.variants.clone(),
             })
@@ -196,6 +278,7 @@ pub fn lower(analyzed: &AnalyzedProgram) -> KirProgram {
             .type_aliases
             .iter()
             .map(|alias| KirTypeAlias {
+                visibility: lower_visibility(alias.visibility),
                 name: alias.name.clone(),
                 target: format_type_ref(&alias.target),
             })
@@ -206,7 +289,19 @@ pub fn lower(analyzed: &AnalyzedProgram) -> KirProgram {
 }
 
 pub fn lower_project(project: &AnalyzedProject) -> KirProject {
-    let modules = project.modules.iter().map(|module| lower(&module.analyzed)).collect::<Vec<_>>();
+    let modules = project
+        .project
+        .modules
+        .iter()
+        .zip(&project.modules)
+        .map(|(project_module, analyzed_module)| {
+            lower_program_with_context(
+                &analyzed_module.analyzed,
+                &project_module.package,
+                &project_module.relative_path,
+            )
+        })
+        .collect::<Vec<_>>();
 
     KirProject {
         package: KirPackage {
@@ -215,11 +310,53 @@ pub fn lower_project(project: &AnalyzedProject) -> KirProject {
             entry_file: project.project.entry_file.clone(),
             entry_module: project.project.entry_module.clone(),
             emit: project.project.manifest.build.emit.clone(),
+            dependencies: project
+                .project
+                .package(&project.project.manifest.package.name)
+                .map(|package| {
+                    package
+                        .dependencies
+                        .iter()
+                        .map(|dependency| KirPackageDependency {
+                            alias: dependency.alias.clone(),
+                            package: dependency.package.clone(),
+                            path: dependency.path.clone(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
         },
+        packages: project
+            .project
+            .packages
+            .iter()
+            .map(|package| KirPackageNode {
+                name: package.name.clone(),
+                version: package.version.clone(),
+                entry_file: package.entry_file.clone(),
+                entry_module: package.entry_module.clone(),
+                is_root: package.is_root,
+                dependencies: package
+                    .dependencies
+                    .iter()
+                    .map(|dependency| KirPackageDependency {
+                        alias: dependency.alias.clone(),
+                        package: dependency.package.clone(),
+                        path: dependency.path.clone(),
+                    })
+                    .collect(),
+            })
+            .collect(),
         source_hash: hash_project(
             &project.project.manifest.package.name,
             &project.project.manifest.package.version,
             &project.project.entry_file,
+            &project
+                .project
+                .packages
+                .iter()
+                .map(|package| package.name.clone())
+                .collect::<Vec<_>>(),
             &modules,
         ),
         modules,
@@ -231,9 +368,22 @@ pub fn render_prompt(program: &KirProgram) -> String {
     writeln!(output, "# Kairos System Context").expect("writing to string cannot fail");
     writeln!(output).expect("writing to string cannot fail");
     writeln!(output, "## Module").expect("writing to string cannot fail");
+    if !program.package.is_empty() {
+        writeln!(output, "- package: {}", program.package).expect("writing to string cannot fail");
+    }
     writeln!(output, "- name: {}", program.module).expect("writing to string cannot fail");
+    if !program.relative_path.is_empty() {
+        writeln!(output, "- path: {}", program.relative_path)
+            .expect("writing to string cannot fail");
+    }
     writeln!(output, "- source_hash: {}", program.source_hash)
         .expect("writing to string cannot fail");
+    if program.imports.is_empty() {
+        writeln!(output, "- imports: none").expect("writing to string cannot fail");
+    } else {
+        writeln!(output, "- imports: {}", program.imports.join(", "))
+            .expect("writing to string cannot fail");
+    }
     writeln!(output).expect("writing to string cannot fail");
 
     writeln!(output, "## Context").expect("writing to string cannot fail");
@@ -360,8 +510,32 @@ pub fn render_project_prompt(project: &KirProject) -> String {
         .expect("writing to string cannot fail");
     writeln!(output, "- entry_module: {}", project.package.entry_module)
         .expect("writing to string cannot fail");
+    if project.package.dependencies.is_empty() {
+        writeln!(output, "- dependencies: none").expect("writing to string cannot fail");
+    } else {
+        writeln!(
+            output,
+            "- dependencies: {}",
+            project
+                .package
+                .dependencies
+                .iter()
+                .map(|dependency| format!("{} -> {}", dependency.alias, dependency.package))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+        .expect("writing to string cannot fail");
+    }
     writeln!(output, "- source_hash: {}", project.source_hash)
         .expect("writing to string cannot fail");
+    writeln!(output).expect("writing to string cannot fail");
+
+    writeln!(output, "## Package Graph").expect("writing to string cannot fail");
+    for package in &project.packages {
+        let role = if package.is_root { "root" } else { "dependency" };
+        writeln!(output, "- {} ({role}) -> {}", package.name, package.entry_module)
+            .expect("writing to string cannot fail");
+    }
     writeln!(output).expect("writing to string cannot fail");
 
     writeln!(output, "## Modules").expect("writing to string cannot fail");
@@ -429,6 +603,8 @@ fn lower_function(function: &kairos_ast::FunctionDecl) -> KirFunction {
         .collect();
 
     KirFunction {
+        visibility: lower_visibility(function.visibility),
+        is_test: function.is_test,
         name: function.name.clone(),
         return_type: format_type_ref(&function.return_type),
         params: function
@@ -443,6 +619,13 @@ fn lower_function(function: &kairos_ast::FunctionDecl) -> KirFunction {
             ensures: function.metadata.ensures.iter().map(lower_expression).collect(),
         },
         body: function.body.statements.iter().map(lower_statement).collect(),
+    }
+}
+
+fn lower_visibility(visibility: Visibility) -> KirVisibility {
+    match visibility {
+        Visibility::Public => KirVisibility::Public,
+        Visibility::Internal => KirVisibility::Internal,
     }
 }
 
@@ -674,12 +857,22 @@ fn hash_source(source: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-fn hash_project(name: &str, version: &str, entry_file: &str, modules: &[KirProgram]) -> String {
+fn hash_project(
+    name: &str,
+    version: &str,
+    entry_file: &str,
+    packages: &[String],
+    modules: &[KirProgram],
+) -> String {
     let mut hasher = Sha256::new();
     hasher.update(name.as_bytes());
     hasher.update(version.as_bytes());
     hasher.update(entry_file.as_bytes());
+    for package in packages {
+        hasher.update(package.as_bytes());
+    }
     for module in modules {
+        hasher.update(module.package.as_bytes());
         hasher.update(module.module.as_bytes());
         hasher.update(module.source_hash.as_bytes());
     }
@@ -779,5 +972,22 @@ mod tests {
         assert!(prompt.contains("## Package"));
         assert!(prompt.contains("### demo.decision_bundle.scoring"));
         assert!(prompt.contains("## Notes for Downstream LLMs"));
+    }
+
+    #[test]
+    fn lowers_local_dependency_project_with_package_graph() {
+        let project =
+            load_project(&fixture("examples/package_reuse_demo")).expect("project should load");
+        let analyzed = analyze_project(&project).expect("project should analyze");
+        let kir = lower_project(&analyzed);
+
+        assert_eq!(kir.package.name, "package_reuse_demo");
+        assert_eq!(kir.packages.len(), 2);
+        assert!(kir.modules.iter().any(|module| module.module == "shared.rules_lib.api"));
+        assert!(kir
+            .modules
+            .iter()
+            .find(|module| module.module == "demo.package_reuse_demo")
+            .is_some_and(|module| !module.import_bindings.is_empty()));
     }
 }

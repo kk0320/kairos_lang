@@ -1,0 +1,19 @@
+module shared.rules_lib.text;
+
+pub fn headline(label: Str) -> Str
+describe "Normalize and title a shared label heading"
+tags ["library", "text", "public"]
+requires [len(label) > 0]
+ensures [starts_with(result, "Shared:")]
+{
+  return concat("Shared: ", upper(normalize_space(label)));
+}
+
+fn secret_suffix() -> Str
+describe "Return a private suffix for internal-only helpers"
+tags ["library", "text", "internal"]
+requires []
+ensures [len(result) > 0]
+{
+  return "internal";
+}

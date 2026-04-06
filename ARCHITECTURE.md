@@ -2,12 +2,12 @@
 
 ## Product shape
 
-Kairos 1.0 is an AI-first language and terminal-native toolchain for deterministic `.kai` projects.
+Kairos 2.0 is an AI-first language platform and terminal-native toolchain for deterministic `.kai` projects.
 
-Its architecture is intentionally narrow:
+Its architecture stays intentionally focused:
 
-- explicit local projects
-- deterministic module loading
+- explicit local packages
+- deterministic module and dependency loading
 - stable machine-readable outputs
 - human-readable shell and CLI workflows
 - no hidden networked/package side effects
@@ -18,27 +18,32 @@ Its architecture is intentionally narrow:
    - resolve a `.kai` file, project directory, or `kairos.toml`
    - find the active manifest when the input belongs to a project
 2. Manifest validation
-   - validate `package.name`, `package.version`, `package.entry`, and `build.emit`
-   - ensure the entry path stays inside the local project model
+   - validate `package.name`, `package.version`, `package.entry`, `dependencies`, and `build.emit`
+   - ensure local paths stay inside the explicit local package model
 3. Source discovery
-   - treat the parent directory of `package.entry` as the source root
+   - treat the parent directory of `package.entry` as the package source root
    - enumerate every `.kai` file under that root in deterministic path order
-4. Parsing
+4. Local dependency loading
+   - load sibling local packages through `[dependencies]`
+   - detect dependency cycles and duplicate package/module conflicts
+5. Parsing
    - lex and parse source into the canonical AST
-5. Project resolution
+6. Project resolution
    - index modules by `module` declaration
-   - validate unresolved imports, duplicate modules, and import cycles
-6. Semantic analysis
-   - validate names, contracts, types, imported symbols, and context metadata
-7. Lowering
+   - validate unresolved imports, package boundary issues, duplicate modules, and import cycles
+7. Semantic analysis
+   - validate names, contracts, test signatures, types, imported symbols, visibility, and context metadata
+8. Lowering
    - lower analyzed modules/projects into stable KIR
-8. Backends
+9. Backends
    - AST JSON
    - KIR JSON
    - prompt/context markdown
    - deterministic interpreter execution
+   - deterministic project-native tests
+   - deterministic doctor reports
    - canonical formatter output
-9. Terminal layer
+10. Terminal layer
    - human-readable command summaries
    - shell banner/status/help rendering
    - reload/watch notifications
@@ -48,22 +53,28 @@ Its architecture is intentionally narrow:
 
 ### `kairos-ast`
 
-Defines the canonical syntax tree and shared rendering helpers for expressions and type references.
+Defines the canonical syntax tree and shared rendering helpers for expressions, imports, and type references.
 
 ### `kairos-parser`
 
-Owns the lexer and parser for the supported Kairos grammar.
+Owns the lexer and parser for the supported Kairos grammar, including:
+
+- `pub`
+- `test fn`
+- module aliases
+- selective imports
+- qualified names through `::`
 
 ### `kairos-project`
 
-Owns the local project model:
+Owns the local project/package model:
 
 - `kairos.toml` loading
 - manifest validation
-- source-root discovery
+- local path dependency loading
 - deterministic source enumeration
-- module indexing
-- unresolved-import and cycle validation
+- package/module indexing
+- unresolved-import, visibility, dependency-boundary, and cycle validation
 - project-wide semantic entry preparation
 
 ### `kairos-semantic`
@@ -73,13 +84,14 @@ Validates the executable and descriptive subset:
 - duplicate definitions
 - undefined identifiers
 - duplicate locals and parameters
-- duplicate imported names
+- imported symbol ambiguity
 - type references
 - function contracts
+- `test fn` signatures
 - context key/value shape
 - return types and return-path behavior
 
-Diagnostics are structured around stable fields:
+Diagnostics stay structured around stable fields:
 
 - `severity`
 - `code`
@@ -90,6 +102,13 @@ Diagnostics are structured around stable fields:
 ### `kairos-ir`
 
 Defines Kairos IR and lowers analyzed modules/projects into a stable machine-facing contract.
+
+In 2.0, project KIR now also carries:
+
+- package graph information
+- dependency metadata
+- explicit import binding metadata
+- visibility and test flags
 
 ### `kairos-interpreter`
 
@@ -102,13 +121,13 @@ Executes the supported deterministic subset:
 - `if / else`
 - user-defined function calls
 - deterministic builtin helpers
-- project-aware imported function calls
+- project-aware imported function calls, including alias/selective import resolution
 
 It also enforces `requires` before execution and `ensures` after execution.
 
 ### `kairos-formatter`
 
-Prints canonical Kairos source for single files or whole projects.
+Prints canonical Kairos source for single files or root packages.
 
 ### `kairos-cli`
 
@@ -120,6 +139,8 @@ Provides the public user surface:
 - `ir`
 - `prompt`
 - `run`
+- `test`
+- `doctor`
 - `shell`
 - `new`
 - `init`
@@ -127,11 +148,11 @@ Provides the public user surface:
 Internally the CLI is split into:
 
 1. `workspace.rs`
-   shared loading, selection, diagnostics, and output helpers
+   shared loading, selection, diagnostics, doctor/test reporting, and output helpers
 2. `presentation.rs`
-   shell banners, help text, status blocks, and execution rendering
+   shell banners, help text, status blocks, dependency lists, and report rendering
 3. `shell.rs`
-   interactive session state, commands, reload, and watch mode
+   interactive session state, commands, reload, watch mode, and dependency introspection
 4. `scaffold.rs`
    project bootstrap logic and template generation
 
@@ -142,48 +163,35 @@ The shell is intentionally line-oriented rather than full-screen.
 That keeps it:
 
 - Windows-friendly
-- easy to reason about
 - deterministic
+- easy to reason about
 - easy to test
 - aligned with the existing CLI backend
 
-The shell does not maintain a separate execution model. Commands such as `:check`, `:prompt`, `:ir`, `:reload`, and `:run` call into the same real project/parser/semantic/KIR/runtime layers used by top-level CLI commands.
-
-Watch mode is session-only and built around a small filesystem notification layer. On relevant `.kai` or `kairos.toml` changes, Kairos reloads and revalidates the current target and prints a concise terminal update.
-
-## Project model
-
-Kairos 1.0 intentionally keeps the project model explicit and local:
-
-- one `kairos.toml` per local project
-- one source root derived from the entry file
-- whole-module imports through `use`
-- deterministic local resolution only
-
-This is a product decision as much as a technical one. Kairos prioritizes trustworthy local behavior over implicit package resolution or remote dependency features.
+The shell does not maintain a separate execution model. Commands such as `:check`, `:prompt`, `:ir`, `:run`, `:deps`, `:reload`, and `:watch` call into the same real project/parser/semantic/KIR/runtime layers used by top-level CLI commands.
 
 ## Stability boundaries
 
-Kairos 1.0 treats these surfaces as stable enough for public usage:
+Kairos 2.0 treats these surfaces as stable:
 
 - CLI command names
 - AST JSON structure
 - KIR JSON structure
 - prompt export structure
 - diagnostic JSON field names
-- deterministic project loading rules
-- scaffolding templates and local manifest shape
+- test/doctor JSON field names
+- deterministic project and local dependency loading rules
+- scaffolding template shape
 
-## Intentional non-goals in 1.0
+## Intentional non-goals in 2.0
 
-The current architecture does not include:
+The current architecture still does not include:
 
-- remote dependencies or package registry support
-- selective imports or visibility modifiers
-- user-program networking or filesystem access
+- remote dependencies or registry support
 - async runtime features
+- user-program networking or filesystem access
 - full-screen TUI complexity
 - full LSP/editor integration
-- general-purpose system scripting ambitions
+- broader non-deterministic runtime behavior
 
-Those remain post-1.0 roadmap work rather than partially hidden features.
+Those remain post-2.0 roadmap work rather than partially hidden features.
