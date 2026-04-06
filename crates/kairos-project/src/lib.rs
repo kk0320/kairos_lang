@@ -134,6 +134,8 @@ pub fn load_project(path: &Path) -> Result<Project> {
             )],
         })?;
 
+    validate_manifest_contents(&manifest, &manifest_path)?;
+
     let root = manifest_path.parent().map(Path::to_path_buf).ok_or_else(|| ProjectError {
         diagnostics: vec![project_error(
             "invalid_manifest_path",
@@ -356,6 +358,45 @@ fn resolve_manifest_path(path: &Path) -> Result<PathBuf> {
                 Some(location_for_path(&manifest_path, None, None)),
             )],
         })
+    }
+}
+
+fn validate_manifest_contents(manifest: &PackageManifest, manifest_path: &Path) -> Result<()> {
+    let mut diagnostics = Vec::new();
+    if manifest.package.name.trim().is_empty() {
+        diagnostics.push(project_error(
+            "invalid_package_name",
+            "manifest `package.name` must not be empty",
+            Some(location_for_path(manifest_path, None, Some("package.name".to_string()))),
+        ));
+    }
+
+    if manifest.package.version.trim().is_empty() {
+        diagnostics.push(project_error(
+            "invalid_package_version",
+            "manifest `package.version` must not be empty",
+            Some(location_for_path(manifest_path, None, Some("package.version".to_string()))),
+        ));
+    }
+
+    if manifest.package.entry.trim().is_empty() {
+        diagnostics.push(project_error(
+            "invalid_entry",
+            "manifest `package.entry` must not be empty",
+            Some(location_for_path(manifest_path, None, Some("package.entry".to_string()))),
+        ));
+    } else if !manifest.package.entry.ends_with(".kai") {
+        diagnostics.push(project_error(
+            "invalid_entry",
+            "manifest `package.entry` must point to a `.kai` source file",
+            Some(location_for_path(manifest_path, None, Some("package.entry".to_string()))),
+        ));
+    }
+
+    if diagnostics.is_empty() {
+        Ok(())
+    } else {
+        Err(ProjectError { diagnostics })
     }
 }
 
@@ -663,5 +704,24 @@ mod tests {
 
         let error = load_project(tempdir.path()).expect_err("project should fail");
         assert!(error.to_string().contains("import_cycle"));
+    }
+
+    #[test]
+    fn rejects_manifest_with_empty_package_name() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::create_dir_all(tempdir.path().join("src")).expect("source tree should create");
+        fs::write(
+            tempdir.path().join("kairos.toml"),
+            "[package]\nname = \"\"\nversion = \"0.2.0\"\nentry = \"src/main.kai\"\n",
+        )
+        .expect("manifest should write");
+        fs::write(
+            tempdir.path().join("src/main.kai"),
+            "module demo.main;\n\nfn main() -> Str\ndescribe \"demo\"\ntags [\"demo\"]\nrequires []\nensures [len(result) > 0]\n{\n  return \"hi\";\n}\n",
+        )
+        .expect("main should write");
+
+        let error = load_project(tempdir.path()).expect_err("project should fail");
+        assert!(error.to_string().contains("invalid_package_name"));
     }
 }

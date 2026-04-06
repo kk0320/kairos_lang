@@ -9,6 +9,7 @@ Kairos is a structured language for logic that should be easy to read, validate,
 - deterministic tool output
 - strong machine-readable structure
 - readable source for both humans and LLMs
+- practical terminal-native workflows
 
 ## What the current implementation supports
 
@@ -19,6 +20,7 @@ Kairos is a structured language for logic that should be easy to read, validate,
 - function metadata with `describe`, `tags`, `requires`, and `ensures`
 - deterministic statement/expression subset for local execution
 - project-aware AST, KIR, prompt, formatter, and runtime flows
+- interactive shell and project scaffolding workflows
 
 ## Why the language is AI-first
 
@@ -34,9 +36,15 @@ Kairos source is expected to carry:
 
 That lets downstream systems consume code as structured meaning instead of guessing from naming conventions or comments alone.
 
+## Terminal-native philosophy
+
+Kairos v0.5 adds a shell, reload, watch, and scaffolding workflow, but the language stays deterministic.
+
+The shell is not a separate toy mode. It uses the real project loader, parser, semantic analysis, KIR lowering, prompt export, and interpreter pipeline. That means terminal workflows stay aligned with the machine-readable outputs used by downstream tools.
+
 ## Project and module model
 
-Kairos v0.2 intentionally uses a small, explicit project model:
+Kairos intentionally uses a small, explicit project model:
 
 - every project is rooted by `kairos.toml`
 - the manifest entry path defines the source root
@@ -49,7 +57,7 @@ This is deliberate. Kairos prefers project determinism and readable semantics ov
 
 ## Deterministic outputs
 
-Kairos is built to emit stable artifacts that downstream AI systems can rely on:
+Kairos emits stable artifacts that downstream AI systems can rely on:
 
 - AST JSON for syntax structure
 - KIR JSON for normalized machine-facing structure
@@ -57,9 +65,9 @@ Kairos is built to emit stable artifacts that downstream AI systems can rely on:
 - structured diagnostics for validation tooling
 - deterministic interpreter reports for supported subsets
 
-## Practical stdlib in v0.2
+## Practical stdlib
 
-The built-in deterministic helpers currently focus on AI/rules scripting needs:
+The built-in deterministic helpers focus on AI/rules scripting needs:
 
 - string normalization and search
 - list inspection and boolean aggregation
@@ -76,5 +84,5 @@ The repository intentionally stays focused on a practical language core:
 - no package registry or remote dependency model
 - no selective imports or visibility keywords yet
 - no external side effects in the interpreter
-- no advanced backend or editor protocol layer yet
+- no full-screen TUI or editor protocol layer yet
 - no rich semantic spans for every diagnostic yet

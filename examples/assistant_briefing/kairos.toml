@@ -1,6 +1,6 @@
 [package]
 name = "assistant_briefing"
-version = "0.2.0"
+version = "0.5.0-dev"
 entry = "src/main.kai"
 
 [build]

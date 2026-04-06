@@ -248,3 +248,128 @@ fn check_reports_structured_import_failure() {
         .stdout(contains("\"status\": \"error\""))
         .stdout(contains("\"code\": \"unresolved_import\""));
 }
+
+#[test]
+fn shell_launches_with_project_path_and_status() {
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .arg("shell")
+        .arg(fixture("examples/assistant_briefing"))
+        .write_stdin(":status\n:quit\n")
+        .assert()
+        .success()
+        .stdout(contains("AI-first programming language shell"))
+        .stdout(contains("project: assistant_briefing"))
+        .stdout(contains("Kairos shell status"));
+}
+
+#[test]
+fn shell_auto_detects_project_from_current_directory() {
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .current_dir(fixture("examples/assistant_briefing"))
+        .arg("shell")
+        .write_stdin(":status\n:quit\n")
+        .assert()
+        .success()
+        .stdout(contains("source: project"))
+        .stdout(contains("project: assistant_briefing"));
+}
+
+#[test]
+fn shell_supports_modules_and_run_commands() {
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .arg("shell")
+        .arg(fixture("examples/decision_bundle"))
+        .write_stdin(":modules\n:run classify 72\n:quit\n")
+        .assert()
+        .success()
+        .stdout(contains("Loaded modules"))
+        .stdout(contains("demo.decision_bundle.labels"))
+        .stdout(contains("\"MEDIUM\""));
+}
+
+#[test]
+fn shell_supports_reload_and_watch_toggle() {
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .arg("shell")
+        .arg(fixture("examples/assistant_briefing"))
+        .write_stdin(":reload\n:watch\n:status\n:unwatch\n:quit\n")
+        .assert()
+        .success()
+        .stdout(contains("OK: reloaded project `assistant_briefing`"))
+        .stdout(contains("Watch mode enabled."))
+        .stdout(contains("watch: active"))
+        .stdout(contains("Watch mode disabled."));
+}
+
+#[test]
+fn shell_can_load_project_from_unloaded_mode() {
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .current_dir(fixture("."))
+        .arg("shell")
+        .write_stdin(":load examples/assistant_briefing\n:status\n:quit\n")
+        .assert()
+        .success()
+        .stdout(contains("source: none"))
+        .stdout(contains("OK: loaded project `assistant_briefing`"))
+        .stdout(contains("project: assistant_briefing"));
+}
+
+#[test]
+fn new_scaffolds_project_that_validates() {
+    let tempdir = tempdir().expect("tempdir should exist");
+    let project_root = tempdir.path().join("temp_demo_project");
+
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .current_dir(tempdir.path())
+        .arg("new")
+        .arg("temp_demo_project")
+        .assert()
+        .success()
+        .stdout(contains("Created Kairos project"))
+        .stdout(contains("temp_demo_project"));
+
+    assert!(project_root.join("kairos.toml").is_file());
+    assert!(project_root.join("src/main.kai").is_file());
+
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .arg("check")
+        .arg(&project_root)
+        .assert()
+        .success()
+        .stdout(contains("validated"));
+}
+
+#[test]
+fn init_scaffolds_current_directory_that_validates() {
+    let tempdir = tempdir().expect("tempdir should exist");
+
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .current_dir(tempdir.path())
+        .arg("init")
+        .arg("--template")
+        .arg("briefing")
+        .assert()
+        .success()
+        .stdout(contains("Initialized Kairos project"));
+
+    assert!(tempdir.path().join("kairos.toml").is_file());
+    assert!(tempdir.path().join("src/main.kai").is_file());
+    assert!(tempdir.path().join("src/briefing.kai").is_file());
+
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .current_dir(tempdir.path())
+        .arg("check")
+        .arg(".")
+        .assert()
+        .success()
+        .stdout(contains("validated"));
+}

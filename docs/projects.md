@@ -7,14 +7,14 @@ Kairos projects use `kairos.toml`.
 ```toml
 [package]
 name = "assistant_briefing"
-version = "0.2.0"
+version = "0.5.0-dev"
 entry = "src/main.kai"
 
 [build]
 emit = ["ast", "ir", "prompt"]
 ```
 
-Supported fields in v0.2:
+Supported fields in v0.5:
 
 - `package.name`
 - `package.version`
@@ -49,6 +49,29 @@ Current intentional limits:
 - no visibility modifiers
 - no registry or external dependency fetching
 
+## Bootstrapping projects
+
+Create a new directory:
+
+```powershell
+cargo run --bin kairos -- new demo_project
+cargo run --bin kairos -- new rules_demo --template rules
+```
+
+Initialize the current directory:
+
+```powershell
+cargo run --bin kairos -- init
+cargo run --bin kairos -- init --template briefing
+```
+
+Scaffolding behavior:
+
+- creates `kairos.toml` if missing
+- creates starter source files if missing
+- avoids overwriting existing files
+- validates the generated project before reporting success
+
 ## Recommended layout
 
 ```text
@@ -77,6 +100,7 @@ cargo run --bin kairos -- ir path\to\project --json
 cargo run --bin kairos -- prompt path\to\project
 cargo run --bin kairos -- fmt path\to\project --check
 cargo run --bin kairos -- run path\to\project --json
+cargo run --bin kairos -- shell path\to\project
 ```
 
-You can also pass a `.kai` file inside the project. Kairos will still load the surrounding project for `check`, `ir`, `prompt`, and `run`.
+You can also pass a `.kai` file inside the project. Kairos will still load the surrounding project for `check`, `ir`, `prompt`, `run`, and `shell`.

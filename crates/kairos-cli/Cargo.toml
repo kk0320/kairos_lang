@@ -11,7 +11,10 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+notify.workspace = true
 serde_json.workspace = true
+shlex.workspace = true
+toml.workspace = true
 kairos-ast = { path = "../kairos-ast" }
 kairos-parser = { path = "../kairos-parser" }
 kairos-semantic = { path = "../kairos-semantic" }

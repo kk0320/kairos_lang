@@ -2,15 +2,16 @@
 
 ## Positioning
 
-Kairos is an AI-first language toolchain for deterministic, machine-readable `.kai` programs.
+Kairos is an AI-first language toolchain for deterministic, machine-readable `.kai` programs that now also provides a terminal-native interactive workflow.
 
-The primary outputs are not just execution artifacts. They are:
+The primary outputs are:
 
 - structural AST JSON
 - stable KIR JSON
 - structured diagnostics JSON
 - prompt/context markdown for downstream LLM systems
 - deterministic interpreter results
+- terminal-native validation and reload feedback
 
 ## Implemented pipeline
 
@@ -18,32 +19,33 @@ The primary outputs are not just execution artifacts. They are:
    - resolves `kairos.toml`
    - determines the source root from the manifest entry path
    - discovers `.kai` files deterministically
-2. Lexing
+2. Lexing and parsing
    - tokenizes `.kai` source
-   - supports comments, strings, numeric literals, keywords, operators, and punctuation
-3. Parsing
-   - recursive-descent parser over the Kairos v0.2 subset
-   - produces the canonical AST in `kairos-ast`
-4. Project resolution
-   - builds the module graph
-   - validates duplicate modules, unresolved imports, and import cycles
-5. Semantic analysis
-   - validates symbols, metadata, context values, return paths, imports, and a practical type subset
-6. Lowering
+   - parses the Kairos subset into the canonical AST
+3. Project resolution
+   - indexes modules
+   - validates unresolved imports, duplicate modules, and import cycles
+4. Semantic analysis
+   - validates symbols, metadata, context values, imports, and practical type constraints
+5. Lowering
    - lowers analyzed modules or whole projects into stable KIR structures
-7. Backends
-   - CLI check output
+6. Deterministic backends
    - AST JSON
    - KIR JSON
    - prompt export
    - interpreter execution
    - formatter output
+7. Terminal workflow
+   - CLI command summaries
+   - shell startup rendering
+   - shell reload and watch notifications
+   - project scaffolding
 
 ## Crate responsibilities
 
 ### `kairos-ast`
 
-Canonical syntax tree definitions plus expression/type rendering helpers used by multiple crates.
+Canonical syntax tree definitions plus expression/type rendering helpers used across the workspace.
 
 ### `kairos-parser`
 
@@ -53,7 +55,7 @@ Owns the lexer and parser for the supported Kairos grammar.
 
 Owns project discovery and module graph loading:
 
-- `kairos.toml` parsing
+- `kairos.toml` parsing and basic manifest validation
 - source root discovery
 - `.kai` file enumeration
 - module indexing
@@ -75,11 +77,13 @@ Validates:
 - module-aware symbol imports
 - return-type and return-path correctness
 
-Warnings are preserved for non-fatal issues such as custom context keys. Diagnostics carry stable fields for severity, code, message, location, and related notes.
+Diagnostics carry stable fields for severity, code, message, location, and related notes.
 
 ### `kairos-ir`
 
-Defines KIR and lowers analyzed modules or whole projects into a stable machine-facing contract. KIR includes:
+Defines KIR and lowers analyzed modules or whole projects into a stable machine-facing contract.
+
+KIR includes:
 
 - module identity
 - imports
@@ -91,14 +95,7 @@ Defines KIR and lowers analyzed modules or whole projects into a stable machine-
 - lowered statement/expression bodies
 - SHA-256 source hash
 
-Project KIR also includes:
-
-- package name and version
-- entry file and entry module
-- configured emit targets
-- stable project hash
-
-This crate also renders the deterministic prompt exports used by `kairos prompt`.
+Project KIR also includes package metadata, entry information, configured emit targets, and a stable project hash.
 
 ### `kairos-interpreter`
 
@@ -118,68 +115,57 @@ It also evaluates `requires` before execution and `ensures` after execution.
 
 ### `kairos-formatter`
 
-Prints a canonical source representation from the AST. Formatting rules are deterministic and designed for low-noise diffs across single files and project roots.
+Prints a canonical source representation from the AST for single files and project roots.
 
 ### `kairos-cli`
 
 Provides the user-facing workflow:
 
-- `check`
-- `fmt`
-- `ast`
-- `ir`
-- `prompt`
-- `run`
+- machine-readable commands: `check`, `ast`, `ir`, `prompt`, `fmt`, `run`
+- terminal-native shell: `shell`
+- scaffolding: `new`, `init`
 
-The CLI is project-aware:
+Internally, the CLI now has three distinct layers:
 
-- project roots and manifest paths load the whole module graph
-- `.kai` files inside a project validate and run with project resolution
-- file AST remains file-scoped for direct inspection
+1. shared workspace loading and output helpers
+2. terminal presentation helpers for banner/status/help rendering
+3. shell/scaffold logic for interactive and bootstrap workflows
 
-## Project model
+## Shell architecture
 
-Kairos v0.2 uses a deliberately small project model:
+Kairos v0.5 keeps the shell deliberately simple:
 
-- one `kairos.toml` manifest per project
-- one source root, derived from the entry file parent directory
-- explicit `use module.path;` imports
-- imported types and functions become available by name inside the importing module
-- ambiguous imported names are rejected instead of guessed
+- line-oriented input via `kairos>`
+- no full-screen TUI
+- command parser with quoted-argument support
+- shared access to the real project/parser/semantic/runtime pipeline
+- in-session watch state only
 
-This keeps project behavior deterministic and easy for tools to reason about.
+` :reload` and `:check` both use real project reloads instead of fake cached summaries.
 
-## Semantic policy notes
+` :watch` uses a small file-watching layer to monitor the current project root or standalone file directory, then reloads and revalidates in the same session.
 
-The implementation currently follows the documented intent without inventing new syntax:
+## Scaffolding architecture
 
-- `describe` is required on every function in the supported subset
-- `tags` must contain string literals
-- `requires` and `ensures` must evaluate to `Bool`
-- `context` values must be compile-time constants
-- unknown `context` keys are warnings, not hard errors, until an explicit custom-key syntax exists in the language docs
-- imported module names must resolve deterministically before semantic analysis runs
+`kairos new` and `kairos init` are CLI-layer features, but they validate generated projects with the real loader and semantic pipeline before reporting success.
 
-## Execution model
+Templates remain intentionally small:
 
-`kairos run` behaves as follows:
+- `default`
+- `briefing`
+- `rules`
 
-1. Load a standalone module or resolve a project.
-2. If `--function` is provided, execute that function with parsed CLI arguments.
-3. Otherwise, execute `main()` in the focused module if it exists and takes no arguments.
-4. Otherwise, execute all zero-argument functions in the focused module.
-5. If no zero-argument entry exists, fail with a clear error.
-
-This keeps execution deterministic while avoiding an undocumented mandatory entrypoint requirement.
+This keeps scaffolding honest, deterministic, and easy to review.
 
 ## Non-goals in this phase
 
-The current architecture deliberately excludes:
+The current architecture still excludes:
 
 - package registries and external dependency fetching
 - selective imports and visibility modifiers
-- external I/O
-- async or concurrency
+- external I/O for user programs
+- async or concurrency in the user language
+- full-screen TUIs
 - LLVM/codegen backends
 - editor protocol integration
 

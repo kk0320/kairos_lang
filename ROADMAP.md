@@ -2,16 +2,17 @@
 
 ## Current state
 
-The repository has completed the v0.2 practical language-core foundation:
+The repository has completed the v0.5 terminal-native foundation:
 
 - Rust workspace builds cleanly
 - project-aware CLI, formatter, and interpreter
 - multi-file loading through `kairos.toml`
 - deterministic module resolution with import-cycle and duplicate-module checks
 - stable AST, KIR, prompt, and diagnostic outputs
-- expanded deterministic stdlib for strings, lists, objects, booleans, and numeric rules
-- bundled single-file and multi-file examples
-- CI-compatible `fmt`, `clippy`, `build`, and `test` workflows
+- expanded deterministic stdlib
+- Kairos shell with reload and watch support
+- project scaffolding through `new` and `init`
+- bundled examples and CLI integration coverage
 
 ## v0.1: MVP foundation
 
@@ -35,26 +36,35 @@ Completed:
 - unresolved-import, duplicate-module, and import-cycle diagnostics
 - project-aware `check`, `ir`, `prompt`, `fmt`, and `run`
 - project KIR and project prompt output
-- expanded stdlib for practical rule execution
-- example projects for AI context, rules, and stdlib usage
 
-Still intentionally out of scope in v0.2:
+## v0.5: Terminal-native workflow
+
+Completed:
+
+- `kairos shell [path]`
+- Kairos-branded shell startup banner and status blocks
+- shell commands for status, modules, prompt, run, reload, and load
+- session watch mode with `:watch` / `:unwatch`
+- project scaffolding through `kairos new` and `kairos init`
+- starter templates for `default`, `briefing`, and `rules`
+
+Still intentionally out of scope in v0.5:
 
 - package registry or remote dependencies
-- selective imports and visibility keywords
-- rich semantic spans for every diagnostic
-- advanced type inference and generics beyond the existing practical subset
-- async, networking, filesystem APIs, or host-side side effects for user programs
+- full-screen TUI complexity
+- auto-run on save by default
+- JIT, GC redesign, async runtime, or networking
+- user-program file I/O
 
-## Next priority: v0.3
+## Next priority: v0.6
 
 Recommended next:
 
-- richer source spans for semantic diagnostics
+- richer semantic spans for diagnostics
 - selective imports and explicit visibility rules
-- clearer type shapes for objects and records
-- project-level test fixtures and snapshot coverage for AST/KIR/diagnostics
-- tree-sitter grammar and syntax-highlighting support
+- clearer object/record type shapes
+- persisted shell history and small shell niceties
+- snapshot coverage for AST/KIR/diagnostic stability
 
 ## Later phases
 
@@ -69,7 +79,7 @@ Recommended next:
 
 - package discovery beyond one local project
 - package versioning
-- standard library depth for data transformation and validation
+- richer data-validation standard library features
 - documentation site generation from KIR and prompt artifacts
 
 ### Additional backends

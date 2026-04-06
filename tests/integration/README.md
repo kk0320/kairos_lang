@@ -10,6 +10,9 @@ They cover:
 - `prompt`
 - `fmt`
 - `run`
+- `shell`
+- `new`
+- `init`
 - file and project-root inputs
 - structured import-failure cases
 - bundled multi-file example projects
