@@ -37,7 +37,7 @@ Projects are rooted by `kairos.toml`.
 ```toml
 [package]
 name = "assistant_briefing"
-version = "0.2.0"
+version = "1.0.0"
 entry = "src/main.kai"
 
 [build]
@@ -119,7 +119,7 @@ The current builtin subset includes:
 
 ## Canonical formatting
 
-The formatter currently guarantees:
+The formatter guarantees:
 
 - one `module` declaration at the top
 - `use` declarations directly below `module`
@@ -132,4 +132,4 @@ The formatter currently guarantees:
 - trailing commas in multiline collections
 - two-space indentation
 - files ending with a newline
-- project formatting iterates all discovered modules in deterministic path order
+- project formatting in deterministic path order

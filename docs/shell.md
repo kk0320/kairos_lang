@@ -11,14 +11,14 @@ With no path:
 - if the current directory is inside a Kairos project, the shell auto-detects it
 - otherwise the shell starts in unloaded mode and you can use `:load <path>`
 
-## Startup experience
+## Startup banner
 
-Kairos prints a branded startup banner and a short operational summary before showing the prompt:
+Kairos prints a branded startup banner and operational summary before showing the prompt:
 
 ```text
 AI-first programming language shell
 
-version: v0.5.0-dev
+version: v1.0.0
 mode: project-aware | deterministic
 source: project
 project: assistant_briefing
@@ -32,6 +32,7 @@ Tips:
 :status
 :check
 :run main
+:ir
 :modules
 :prompt
 :reload
@@ -47,7 +48,7 @@ kairos>
 - `:help`
   Show shell help.
 - `:status`
-  Show the current mode, root, package, entry, module count, and watch state.
+  Show the current mode, source, root, package, entry module, module count, and watch state.
 - `:load <path>`
   Load a project, manifest, or `.kai` file into the current session.
 - `:check`
@@ -57,7 +58,7 @@ kairos>
 - `:ir [selector]`
   Print KIR JSON for the current target or a selected module.
 - `:prompt [selector]`
-  Print prompt context for the current target or a selected module.
+  Print prompt/context markdown for the current target or a selected module.
 - `:run [function] [args...]`
   Run the current target with optional function and arguments.
 - `:modules`
@@ -69,20 +70,29 @@ kairos>
 - `:unwatch`
   Stop session watch mode.
 - `:clear`
-  Clear the terminal and redraw the Kairos banner.
+  Clear the terminal and redraw the banner.
 - `:quit`
   Exit the shell.
 
 Selectors for `:ast`, `:ir`, and `:prompt` are exact module names or exact relative paths inside the project.
+
+## `:run` behavior
+
+Shell `:run` is human-oriented. It renders a concise execution report instead of top-level JSON.
+
+Argument parsing follows the same rules as `kairos run`:
+
+- JSON values such as `72`, `true`, `[1,2]`, and `{"ok":true}` are accepted directly
+- bare non-JSON text is treated as a string
 
 ## Reload and watch
 
 ` :reload`:
 
 - reloads the current project or file from disk
-- re-runs project loading and semantic validation
-- keeps the session open
-- reports success or failure clearly
+- re-runs parsing, project resolution, and semantic validation
+- keeps the shell session alive
+- prints a success/failure summary
 
 ` :watch`:
 
@@ -117,18 +127,9 @@ kairos> :prompt
 ...
 
 kairos> :run classify 72
-{
-  "module": "demo.decision_bundle",
-  "results": [
-    {
-      "function": "classify",
-      "value": {
-        "kind": "string",
-        "value": "MEDIUM"
-      }
-    }
-  ]
-}
+Kairos execution report
+- module: demo.decision_bundle
+- classify => "MEDIUM"
 
 kairos> :reload
 OK: reloaded project `decision_bundle` (entry: demo.decision_bundle, modules: 3, warnings: 0)
@@ -140,6 +141,6 @@ Watch mode enabled.
 ## Current limitations
 
 - the shell is line-oriented rather than full-screen
-- shell output is human-oriented and not intended to replace stable top-level JSON commands
+- shell output is human-oriented and does not replace stable top-level JSON commands
 - watch notifications may appear between prompts while you are typing
 - persisted shell history is not implemented yet

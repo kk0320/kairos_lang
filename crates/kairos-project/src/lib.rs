@@ -2,7 +2,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
     fmt, fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use kairos_ast::Program;
@@ -369,12 +369,32 @@ fn validate_manifest_contents(manifest: &PackageManifest, manifest_path: &Path) 
             "manifest `package.name` must not be empty",
             Some(location_for_path(manifest_path, None, Some("package.name".to_string()))),
         ));
+    } else if !is_valid_package_name(&manifest.package.name) {
+        let suggestion = normalize_package_name(&manifest.package.name);
+        let mut diagnostic = project_error(
+            "invalid_package_name",
+            "manifest `package.name` must start with a lowercase ASCII letter and use only lowercase ASCII letters, digits, and underscores",
+            Some(location_for_path(manifest_path, None, Some("package.name".to_string()))),
+        );
+        if suggestion != manifest.package.name {
+            diagnostic = diagnostic.with_related(
+                format!("suggested package name: `{suggestion}`"),
+                Some(location_for_path(manifest_path, None, Some("package.name".to_string()))),
+            );
+        }
+        diagnostics.push(diagnostic);
     }
 
     if manifest.package.version.trim().is_empty() {
         diagnostics.push(project_error(
             "invalid_package_version",
             "manifest `package.version` must not be empty",
+            Some(location_for_path(manifest_path, None, Some("package.version".to_string()))),
+        ));
+    } else if !is_valid_version_string(&manifest.package.version) {
+        diagnostics.push(project_error(
+            "invalid_package_version",
+            "manifest `package.version` must use `MAJOR.MINOR.PATCH` with an optional prerelease suffix",
             Some(location_for_path(manifest_path, None, Some("package.version".to_string()))),
         ));
     }
@@ -391,6 +411,44 @@ fn validate_manifest_contents(manifest: &PackageManifest, manifest_path: &Path) 
             "manifest `package.entry` must point to a `.kai` source file",
             Some(location_for_path(manifest_path, None, Some("package.entry".to_string()))),
         ));
+    } else if Path::new(&manifest.package.entry).is_absolute() {
+        diagnostics.push(project_error(
+            "invalid_entry",
+            "manifest `package.entry` must be a relative path inside the project root",
+            Some(location_for_path(manifest_path, None, Some("package.entry".to_string()))),
+        ));
+    } else if Path::new(&manifest.package.entry)
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        diagnostics.push(project_error(
+            "invalid_entry",
+            "manifest `package.entry` must not traverse outside the project root",
+            Some(location_for_path(manifest_path, None, Some("package.entry".to_string()))),
+        ));
+    }
+
+    let allowed_emit_targets = ["ast", "ir", "prompt"];
+    let mut seen_emit_targets = BTreeSet::new();
+    for emit in &manifest.build.emit {
+        if !allowed_emit_targets.contains(&emit.as_str()) {
+            diagnostics.push(project_error(
+                "invalid_build_emit",
+                format!(
+                    "manifest `build.emit` contains unsupported target `{emit}`; expected one of: {}",
+                    allowed_emit_targets.join(", ")
+                ),
+                Some(location_for_path(manifest_path, None, Some("build.emit".to_string()))),
+            ));
+        }
+
+        if !seen_emit_targets.insert(emit.clone()) {
+            diagnostics.push(project_error(
+                "duplicate_build_emit",
+                format!("manifest `build.emit` contains duplicate target `{emit}`"),
+                Some(location_for_path(manifest_path, None, Some("build.emit".to_string()))),
+            ));
+        }
     }
 
     if diagnostics.is_empty() {
@@ -569,6 +627,58 @@ fn normalize_relative_path(path: &str) -> String {
     path.replace('\\', "/")
 }
 
+fn is_valid_package_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    matches!(chars.next(), Some(ch) if ch.is_ascii_lowercase())
+        && chars.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
+}
+
+fn normalize_package_name(value: &str) -> String {
+    let mut normalized = String::new();
+    let mut previous_was_separator = false;
+
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            normalized.push(ch.to_ascii_lowercase());
+            previous_was_separator = false;
+        } else if !previous_was_separator {
+            normalized.push('_');
+            previous_was_separator = true;
+        }
+    }
+
+    let mut normalized = normalized.trim_matches('_').to_string();
+    if normalized.chars().next().is_some_and(|ch| ch.is_ascii_digit()) {
+        normalized.insert(0, 'k');
+    }
+    if normalized.is_empty() {
+        "kairos_app".to_string()
+    } else {
+        normalized
+    }
+}
+
+fn is_valid_version_string(version: &str) -> bool {
+    let (core, prerelease) = match version.split_once('-') {
+        Some((core, prerelease)) => (core, Some(prerelease)),
+        None => (version, None),
+    };
+
+    let core_parts = core.split('.').collect::<Vec<_>>();
+    if core_parts.len() != 3
+        || core_parts
+            .iter()
+            .any(|part| part.is_empty() || !part.chars().all(|ch| ch.is_ascii_digit()))
+    {
+        return false;
+    }
+
+    prerelease.is_none_or(|suffix| {
+        !suffix.is_empty()
+            && suffix.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '-')
+    })
+}
+
 fn location_for_path(
     path: &Path,
     module: Option<String>,
@@ -617,7 +727,7 @@ mod tests {
         fs::create_dir_all(tempdir.path().join("src/shared")).expect("source tree should create");
         fs::write(
             tempdir.path().join("kairos.toml"),
-            "[package]\nname = \"demo\"\nversion = \"0.2.0\"\nentry = \"src/main.kai\"\n",
+            "[package]\nname = \"demo\"\nversion = \"1.0.0\"\nentry = \"src/main.kai\"\n",
         )
         .expect("manifest should write");
         fs::write(
@@ -645,7 +755,7 @@ mod tests {
         fs::create_dir_all(tempdir.path().join("src")).expect("source tree should create");
         fs::write(
             tempdir.path().join("kairos.toml"),
-            "[package]\nname = \"demo\"\nversion = \"0.2.0\"\nentry = \"src/main.kai\"\n",
+            "[package]\nname = \"demo\"\nversion = \"1.0.0\"\nentry = \"src/main.kai\"\n",
         )
         .expect("manifest should write");
         fs::write(
@@ -664,7 +774,7 @@ mod tests {
         fs::create_dir_all(tempdir.path().join("src/nested")).expect("source tree should create");
         fs::write(
             tempdir.path().join("kairos.toml"),
-            "[package]\nname = \"demo\"\nversion = \"0.2.0\"\nentry = \"src/main.kai\"\n",
+            "[package]\nname = \"demo\"\nversion = \"1.0.0\"\nentry = \"src/main.kai\"\n",
         )
         .expect("manifest should write");
         fs::write(
@@ -688,7 +798,7 @@ mod tests {
         fs::create_dir_all(tempdir.path().join("src")).expect("source tree should create");
         fs::write(
             tempdir.path().join("kairos.toml"),
-            "[package]\nname = \"demo\"\nversion = \"0.2.0\"\nentry = \"src/main.kai\"\n",
+            "[package]\nname = \"demo\"\nversion = \"1.0.0\"\nentry = \"src/main.kai\"\n",
         )
         .expect("manifest should write");
         fs::write(
@@ -712,7 +822,7 @@ mod tests {
         fs::create_dir_all(tempdir.path().join("src")).expect("source tree should create");
         fs::write(
             tempdir.path().join("kairos.toml"),
-            "[package]\nname = \"\"\nversion = \"0.2.0\"\nentry = \"src/main.kai\"\n",
+            "[package]\nname = \"\"\nversion = \"1.0.0\"\nentry = \"src/main.kai\"\n",
         )
         .expect("manifest should write");
         fs::write(
@@ -723,5 +833,62 @@ mod tests {
 
         let error = load_project(tempdir.path()).expect_err("project should fail");
         assert!(error.to_string().contains("invalid_package_name"));
+    }
+
+    #[test]
+    fn rejects_manifest_with_invalid_version_format() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::create_dir_all(tempdir.path().join("src")).expect("source tree should create");
+        fs::write(
+            tempdir.path().join("kairos.toml"),
+            "[package]\nname = \"demo\"\nversion = \"1.0\"\nentry = \"src/main.kai\"\n",
+        )
+        .expect("manifest should write");
+        fs::write(
+            tempdir.path().join("src/main.kai"),
+            "module demo.main;\n\nfn main() -> Str\ndescribe \"demo\"\ntags [\"demo\"]\nrequires []\nensures [len(result) > 0]\n{\n  return \"hi\";\n}\n",
+        )
+        .expect("main should write");
+
+        let error = load_project(tempdir.path()).expect_err("project should fail");
+        assert!(error.to_string().contains("invalid_package_version"));
+    }
+
+    #[test]
+    fn rejects_manifest_with_parent_relative_entry() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::create_dir_all(tempdir.path().join("src")).expect("source tree should create");
+        fs::write(
+            tempdir.path().join("kairos.toml"),
+            "[package]\nname = \"demo\"\nversion = \"1.0.0\"\nentry = \"../main.kai\"\n",
+        )
+        .expect("manifest should write");
+        fs::write(
+            tempdir.path().join("src/main.kai"),
+            "module demo.main;\n\nfn main() -> Str\ndescribe \"demo\"\ntags [\"demo\"]\nrequires []\nensures [len(result) > 0]\n{\n  return \"hi\";\n}\n",
+        )
+        .expect("main should write");
+
+        let error = load_project(tempdir.path()).expect_err("project should fail");
+        assert!(error.to_string().contains("must not traverse outside the project root"));
+    }
+
+    #[test]
+    fn rejects_manifest_with_invalid_emit_target() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::create_dir_all(tempdir.path().join("src")).expect("source tree should create");
+        fs::write(
+            tempdir.path().join("kairos.toml"),
+            "[package]\nname = \"demo\"\nversion = \"1.0.0\"\nentry = \"src/main.kai\"\n\n[build]\nemit = [\"ast\", \"binary\"]\n",
+        )
+        .expect("manifest should write");
+        fs::write(
+            tempdir.path().join("src/main.kai"),
+            "module demo.main;\n\nfn main() -> Str\ndescribe \"demo\"\ntags [\"demo\"]\nrequires []\nensures [len(result) > 0]\n{\n  return \"hi\";\n}\n",
+        )
+        .expect("main should write");
+
+        let error = load_project(tempdir.path()).expect_err("project should fail");
+        assert!(error.to_string().contains("invalid_build_emit"));
     }
 }

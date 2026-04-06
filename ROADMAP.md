@@ -1,89 +1,66 @@
 # Kairos Roadmap
 
-## Current state
+## Current state: v1.0
 
-The repository has completed the v0.5 terminal-native foundation:
+Kairos 1.0 is the first release-ready public baseline.
 
-- Rust workspace builds cleanly
-- project-aware CLI, formatter, and interpreter
-- multi-file loading through `kairos.toml`
-- deterministic module resolution with import-cycle and duplicate-module checks
-- stable AST, KIR, prompt, and diagnostic outputs
-- expanded deterministic stdlib
-- Kairos shell with reload and watch support
-- project scaffolding through `new` and `init`
-- bundled examples and CLI integration coverage
+Completed in 1.0:
 
-## v0.1: MVP foundation
+- Rust workspace with clean build/test/fmt/clippy flows
+- `.kai` parsing, AST, semantics, KIR, formatter, and deterministic interpreter
+- project-aware workflows through `kairos.toml`
+- deterministic multi-file module loading with `use`
+- structured diagnostics
+- stable AST JSON, KIR JSON, prompt markdown, and execution JSON outputs
+- terminal-native shell with reload and watch
+- local project scaffolding through `kairos new` and `kairos init`
+- bundled examples and public-facing documentation
 
-Completed:
+## Historical phases
 
-- lexer and parser for `.kai`
-- canonical AST
-- semantic validation for the initial subset
-- deterministic formatting
-- AST JSON export
-- KIR JSON export
-- prompt export
-- interpreter execution for the deterministic subset
+### v0.1
 
-## v0.2: Project-aware foundation
+- MVP parser, AST, semantics, formatter, KIR, prompt export, interpreter
 
-Completed:
+### v0.2
 
-- `kairos.toml` project loading
+- project loading
 - multi-file module resolution
-- unresolved-import, duplicate-module, and import-cycle diagnostics
 - project-aware `check`, `ir`, `prompt`, `fmt`, and `run`
-- project KIR and project prompt output
 
-## v0.5: Terminal-native workflow
+### v0.5
 
-Completed:
+- shell mode
+- watch/reload workflows
+- scaffolding templates
+- terminal presentation layer
 
-- `kairos shell [path]`
-- Kairos-branded shell startup banner and status blocks
-- shell commands for status, modules, prompt, run, reload, and load
-- session watch mode with `:watch` / `:unwatch`
-- project scaffolding through `kairos new` and `kairos init`
-- starter templates for `default`, `briefing`, and `rules`
+## Post-1.0 priorities
 
-Still intentionally out of scope in v0.5:
+### v1.1 candidates
 
-- package registry or remote dependencies
-- full-screen TUI complexity
-- auto-run on save by default
-- JIT, GC redesign, async runtime, or networking
-- user-program file I/O
+- richer semantic spans and source-mapped diagnostics
+- snapshot/golden coverage for AST, KIR, and diagnostics stability
+- shell session history and a few quality-of-life shell improvements
+- more explicit manifest/schema documentation
 
-## Next priority: v0.6
+### v1.2 candidates
 
-Recommended next:
-
-- richer semantic spans for diagnostics
 - selective imports and explicit visibility rules
-- clearer object/record type shapes
-- persisted shell history and small shell niceties
-- snapshot coverage for AST/KIR/diagnostic stability
-
-## Later phases
-
-### Tooling
-
-- language server protocol support
-- VS Code integration
-- formatter heuristics for larger nested expressions
+- clearer object/record type modeling
 - machine-readable diagnostic schema documentation
+- additional deterministic validation-focused stdlib helpers
 
-### Ecosystem
+## Deliberately out of scope after 1.0 unless product direction changes
 
-- package discovery beyond one local project
-- package versioning
-- richer data-validation standard library features
-- documentation site generation from KIR and prompt artifacts
+- package registry
+- remote imports
+- async runtime
+- networking
+- user-program file I/O
+- full LSP/editor protocol stack
+- full-screen TUI shell
+- macro-heavy metaprogramming
+- broad non-deterministic runtime features
 
-### Additional backends
-
-- Python or TypeScript export if the KIR contract proves stable
-- optional code generation backends
-- LLVM only if the language semantics and KIR are mature enough to justify it
+Kairos should grow by sharpening its AI-first deterministic strengths, not by becoming an unfocused general-purpose toolchain all at once.

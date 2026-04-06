@@ -375,14 +375,14 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "kairos-ast"
-version = "0.5.0-dev"
+version = "1.0.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "kairos-cli"
-version = "0.5.0-dev"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -404,7 +404,7 @@ dependencies = [
 
 [[package]]
 name = "kairos-formatter"
-version = "0.5.0-dev"
+version = "1.0.0"
 dependencies = [
  "kairos-ast",
  "kairos-parser",
@@ -412,7 +412,7 @@ dependencies = [
 
 [[package]]
 name = "kairos-interpreter"
-version = "0.5.0-dev"
+version = "1.0.0"
 dependencies = [
  "kairos-ir",
  "kairos-parser",
@@ -423,7 +423,7 @@ dependencies = [
 
 [[package]]
 name = "kairos-ir"
-version = "0.5.0-dev"
+version = "1.0.0"
 dependencies = [
  "kairos-ast",
  "kairos-parser",
@@ -436,7 +436,7 @@ dependencies = [
 
 [[package]]
 name = "kairos-parser"
-version = "0.5.0-dev"
+version = "1.0.0"
 dependencies = [
  "kairos-ast",
  "thiserror",
@@ -444,7 +444,7 @@ dependencies = [
 
 [[package]]
 name = "kairos-project"
-version = "0.5.0-dev"
+version = "1.0.0"
 dependencies = [
  "kairos-ast",
  "kairos-parser",
@@ -457,7 +457,7 @@ dependencies = [
 
 [[package]]
 name = "kairos-semantic"
-version = "0.5.0-dev"
+version = "1.0.0"
 dependencies = [
  "kairos-ast",
  "kairos-parser",

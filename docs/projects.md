@@ -7,23 +7,32 @@ Kairos projects use `kairos.toml`.
 ```toml
 [package]
 name = "assistant_briefing"
-version = "0.5.0-dev"
+version = "1.0.0"
 entry = "src/main.kai"
 
 [build]
 emit = ["ast", "ir", "prompt"]
 ```
 
-Supported fields in v0.5:
+Supported fields in 1.0:
 
 - `package.name`
 - `package.version`
 - `package.entry`
 - `build.emit`
 
+## Manifest rules
+
+Kairos 1.0 validates that:
+
+- `package.name` is non-empty and uses lowercase ASCII letters, digits, and underscores
+- `package.version` uses `MAJOR.MINOR.PATCH` with an optional prerelease suffix
+- `package.entry` is a relative `.kai` path inside the project
+- `build.emit` contains only supported targets: `ast`, `ir`, `prompt`
+
 ## Discovery rules
 
-Kairos currently uses a minimal deterministic project model:
+Kairos uses a small deterministic local project model:
 
 1. Find `kairos.toml`.
 2. Resolve `package.entry`.
@@ -47,7 +56,7 @@ Current intentional limits:
 - no selective imports
 - no aliasing
 - no visibility modifiers
-- no registry or external dependency fetching
+- no registry or remote dependency fetching
 
 ## Bootstrapping projects
 
@@ -71,6 +80,7 @@ Scaffolding behavior:
 - creates starter source files if missing
 - avoids overwriting existing files
 - validates the generated project before reporting success
+- normalizes package/module names when the directory name needs cleanup
 
 ## Recommended layout
 
@@ -92,7 +102,7 @@ use demo.project.rules;
 use demo.project.shared.text;
 ```
 
-## CLI workflow
+## Typical CLI workflow
 
 ```powershell
 cargo run --bin kairos -- check path\to\project

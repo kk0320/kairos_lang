@@ -11,6 +11,7 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
+use presentation::render_execution_report;
 use scaffold::{create_new_project, init_project, ScaffoldReport, TemplateKind};
 use shell::run_shell;
 use workspace::{
@@ -20,7 +21,14 @@ use workspace::{
 };
 
 #[derive(Debug, Parser)]
-#[command(name = "kairos", about = "Kairos language CLI", version)]
+#[command(
+    name = "kairos",
+    version,
+    about = "AI-first programming language and terminal-native toolchain for deterministic `.kai` projects",
+    long_about = "Kairos is an AI-first programming language and terminal-native toolchain for deterministic `.kai` projects.\n\nUse Kairos to validate source, inspect stable AST/KIR JSON, generate prompt context, run deterministic functions, open the interactive shell, and scaffold new local projects.",
+    after_help = "Examples:\n  kairos check examples\\assistant_briefing --json\n  kairos prompt examples\\assistant_briefing\n  kairos run examples\\decision_bundle --function classify --arg 72 --json\n  kairos shell examples\\assistant_briefing\n  kairos new demo_project --template briefing",
+    arg_required_else_help = true
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -28,50 +36,130 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    #[command(
+        about = "Validate a `.kai` file or Kairos project",
+        long_about = "Parse and semantically validate a standalone `.kai` file or a whole Kairos project rooted by `kairos.toml`. When a file belongs to a project, Kairos validates it with full project/module resolution."
+    )]
     Check {
+        #[arg(
+            value_name = "PATH",
+            help = "Path to a `.kai` file, project directory, or `kairos.toml`"
+        )]
         path: PathBuf,
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Emit stable JSON status or diagnostics instead of human-readable summaries"
+        )]
         json: bool,
     },
+    #[command(
+        about = "Apply canonical formatting",
+        long_about = "Format one `.kai` file or every discovered module in a Kairos project using Kairos's deterministic canonical style."
+    )]
     Fmt {
+        #[arg(
+            value_name = "PATH",
+            help = "Path to a `.kai` file, project directory, or `kairos.toml`"
+        )]
         path: PathBuf,
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Fail instead of rewriting files when formatting changes would be needed"
+        )]
         check: bool,
-        #[arg(long)]
+        #[arg(long, help = "Print formatted output to stdout; only valid for single-file input")]
         stdout: bool,
     },
+    #[command(
+        about = "Print AST JSON",
+        long_about = "Print stable AST JSON for a standalone `.kai` file or a project root. The `--json` flag is retained for compatibility; AST output is always JSON."
+    )]
     Ast {
+        #[arg(
+            value_name = "PATH",
+            help = "Path to a `.kai` file, project directory, or `kairos.toml`"
+        )]
         path: PathBuf,
-        #[arg(long)]
+        #[arg(long, help = "Retained for compatibility; AST output is always JSON")]
         json: bool,
     },
+    #[command(
+        about = "Print KIR JSON",
+        long_about = "Print stable KIR JSON for a standalone `.kai` file or a project root. The `--json` flag is retained for compatibility; KIR output is always JSON."
+    )]
     Ir {
+        #[arg(
+            value_name = "PATH",
+            help = "Path to a `.kai` file, project directory, or `kairos.toml`"
+        )]
         path: PathBuf,
-        #[arg(long)]
+        #[arg(long, help = "Retained for compatibility; KIR output is always JSON")]
         json: bool,
     },
+    #[command(
+        about = "Generate prompt/context markdown",
+        long_about = "Render deterministic prompt/context markdown for a standalone `.kai` file or an entire Kairos project."
+    )]
     Prompt {
+        #[arg(
+            value_name = "PATH",
+            help = "Path to a `.kai` file, project directory, or `kairos.toml`"
+        )]
         path: PathBuf,
     },
+    #[command(
+        about = "Run deterministic Kairos code",
+        long_about = "Execute the supported deterministic interpreter subset for a file or project. Use `--json` for machine-readable output and omit it for a concise human summary."
+    )]
     Run {
+        #[arg(
+            value_name = "PATH",
+            help = "Path to a `.kai` file, project directory, or `kairos.toml`"
+        )]
         path: PathBuf,
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Target a function by name, or `module.path::function_name` inside a project"
+        )]
         function: Option<String>,
-        #[arg(long = "arg")]
+        #[arg(
+            long = "arg",
+            help = "Pass a runtime argument. JSON values are accepted, or bare text is treated as a string"
+        )]
         args: Vec<String>,
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Emit stable JSON execution output instead of a human-readable summary"
+        )]
         json: bool,
     },
+    #[command(
+        about = "Open the Kairos interactive shell",
+        long_about = "Launch the Kairos interactive shell. With no path, the shell auto-detects the surrounding project when started inside a Kairos workspace; otherwise it starts in unloaded mode."
+    )]
     Shell {
+        #[arg(
+            value_name = "PATH",
+            help = "Optional project directory, `kairos.toml`, or `.kai` file to load immediately"
+        )]
         path: Option<PathBuf>,
     },
+    #[command(
+        about = "Create a new Kairos project directory",
+        long_about = "Scaffold a new Kairos project directory with a validated manifest, starter source files, and a minimal README. Generated projects validate immediately."
+    )]
     New {
+        #[arg(value_name = "NAME", help = "Directory name for the new project")]
         name: String,
-        #[arg(long, value_enum, default_value_t = TemplateKind::Default)]
+        #[arg(long, value_enum, default_value_t = TemplateKind::Default, help = "Starter project template to generate")]
         template: TemplateKind,
     },
+    #[command(
+        about = "Initialize the current directory as a Kairos project",
+        long_about = "Create `kairos.toml`, starter source files, and a README in the current directory without overwriting existing files. Generated projects validate immediately."
+    )]
     Init {
-        #[arg(long, value_enum, default_value_t = TemplateKind::Default)]
+        #[arg(long, value_enum, default_value_t = TemplateKind::Default, help = "Starter project template to generate")]
         template: TemplateKind,
     },
 }
@@ -214,13 +302,16 @@ fn command_run(
     args: &[String],
     json_output: bool,
 ) -> Result<()> {
-    let _json_output = json_output;
     let runtime_args =
         args.iter().map(|arg| workspace::parse_runtime_value(arg)).collect::<Result<Vec<_>>>()?;
     let workspace =
         LoadedWorkspace::load(path).map_err(|diagnostics| diagnostics_to_anyhow(&diagnostics))?;
     let report = workspace.run(function, &runtime_args)?;
-    print_json(&serde_json::to_value(&report)?)?;
+    if json_output {
+        print_json(&serde_json::to_value(&report)?)?;
+    } else {
+        println!("{}", render_execution_report(&report));
+    }
     Ok(())
 }
 
@@ -256,6 +347,12 @@ fn print_scaffold_report(verb: &str, report: &ScaffoldReport) {
         println!("Skipped:");
         for item in &report.skipped {
             println!("- {item}");
+        }
+    }
+    if !report.notes.is_empty() {
+        println!("Notes:");
+        for note in &report.notes {
+            println!("- {note}");
         }
     }
     println!("Next steps:");

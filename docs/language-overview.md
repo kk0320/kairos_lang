@@ -1,30 +1,30 @@
 # Language Overview
 
-Kairos is a structured language for logic that should be easy to read, validate, serialize, and reuse as AI context.
+Kairos is a structured language for logic, validation, and prompt-adjacent workflows that should be easy to read, validate, serialize, and reuse as AI context.
 
 ## Design goals
 
 - explicit intent
 - low ambiguity
-- deterministic tool output
+- deterministic execution and tooling output
 - strong machine-readable structure
 - readable source for both humans and LLMs
 - practical terminal-native workflows
 
-## What the current implementation supports
+## What Kairos 1.0 supports
 
-- multi-file projects through `kairos.toml`
+- multi-file local projects through `kairos.toml`
 - modules with `module` and explicit `use`
 - `context` metadata blocks
 - `schema`, `enum`, and `type` declarations
 - function metadata with `describe`, `tags`, `requires`, and `ensures`
-- deterministic statement/expression subset for local execution
-- project-aware AST, KIR, prompt, formatter, and runtime flows
-- interactive shell and project scaffolding workflows
+- deterministic statement/expression execution for the supported subset
+- project-aware AST, KIR, prompt, formatter, runtime, and shell flows
+- local scaffolding through `new` and `init`
 
 ## Why the language is AI-first
 
-Kairos source is expected to carry:
+Kairos source is expected to carry meaning directly in the language:
 
 - goal
 - audience
@@ -34,26 +34,26 @@ Kairos source is expected to carry:
 - preconditions
 - postconditions
 
-That lets downstream systems consume code as structured meaning instead of guessing from naming conventions or comments alone.
+That lets downstream systems consume code as structured meaning instead of guessing from naming conventions, comments, or repository folklore.
 
 ## Terminal-native philosophy
 
-Kairos v0.5 adds a shell, reload, watch, and scaffolding workflow, but the language stays deterministic.
+Kairos includes a shell, reload, watch, and scaffolding workflow, but the language stays deterministic.
 
-The shell is not a separate toy mode. It uses the real project loader, parser, semantic analysis, KIR lowering, prompt export, and interpreter pipeline. That means terminal workflows stay aligned with the machine-readable outputs used by downstream tools.
+The shell is not a separate toy mode. It uses the real project loader, parser, semantic analysis, KIR lowering, prompt export, and interpreter pipeline. Terminal workflows therefore stay aligned with the machine-readable outputs used by downstream tools.
 
 ## Project and module model
 
-Kairos intentionally uses a small, explicit project model:
+Kairos intentionally uses a small explicit project model:
 
 - every project is rooted by `kairos.toml`
 - the manifest entry path defines the source root
 - each source file declares exactly one `module`
 - `use demo.shared.rules;` imports an entire module by explicit path
 - imported types and functions become available by name inside the importing module
-- ambiguous imported names are errors instead of implicit precedence rules
+- ambiguous imported names are errors instead of hidden precedence rules
 
-This is deliberate. Kairos prefers project determinism and readable semantics over clever resolution rules.
+This is deliberate. Kairos prefers project determinism and readable semantics over clever resolution behavior.
 
 ## Deterministic outputs
 
@@ -74,11 +74,11 @@ The built-in deterministic helpers focus on AI/rules scripting needs:
 - object key lookup for small record-like values
 - numeric comparison and clamping helpers
 
-This is enough to support prompt shaping, decision logic, and schema-adjacent validation without introducing side effects.
+This subset is intentionally enough for prompt shaping, decision logic, and schema-adjacent validation without introducing ambient side effects.
 
 ## Current limitations
 
-The repository intentionally stays focused on a practical language core:
+Kairos 1.0 intentionally stays focused:
 
 - one local project root at a time
 - no package registry or remote dependency model

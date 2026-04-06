@@ -14,8 +14,8 @@ use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::{
     presentation::{
-        clear_screen_sequence, render_module_list, render_shell_banner, render_shell_help,
-        render_shell_status, ShellSnapshot,
+        clear_screen_sequence, render_execution_report, render_module_list, render_shell_banner,
+        render_shell_help, render_shell_status, ShellSnapshot,
     },
     workspace::{
         diagnostics_to_anyhow, normalize_display_path, parse_runtime_value, print_json,
@@ -194,7 +194,7 @@ impl ShellSession {
                         .context("no Kairos project or file is currently loaded")?;
                     workspace.run(function.as_deref(), &runtime_args)?
                 };
-                print_json(&serde_json::to_value(&report)?)?;
+                println!("{}", render_execution_report(&report));
             }
             ShellCommand::Modules => {
                 let records = self.module_records()?;
@@ -462,7 +462,7 @@ fn parse_shell_command(input: &str) -> Result<ShellCommand> {
         "unwatch" if args.is_empty() => Ok(ShellCommand::Unwatch),
         "clear" if args.is_empty() => Ok(ShellCommand::Clear),
         "quit" if args.is_empty() => Ok(ShellCommand::Quit),
-        _ => bail!("unknown shell command `{command}`"),
+        _ => bail!("unknown shell command `{command}`. Use `:help` to see available commands"),
     }
 }
 

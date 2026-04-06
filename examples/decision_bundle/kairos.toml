@@ -1,6 +1,6 @@
 [package]
 name = "decision_bundle"
-version = "0.5.0-dev"
+version = "1.0.0"
 entry = "src/main.kai"
 
 [build]

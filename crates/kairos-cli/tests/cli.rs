@@ -21,6 +21,18 @@ fn check_reports_project_when_file_belongs_to_manifest() {
 }
 
 #[test]
+fn help_describes_kairos_as_terminal_native_toolchain() {
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(contains("terminal-native toolchain"))
+        .stdout(contains("kairos shell examples\\assistant_briefing"))
+        .stdout(contains("Create a new Kairos project directory"));
+}
+
+#[test]
 fn check_accepts_project_root_json() {
     Command::cargo_bin("kairos")
         .expect("binary should build")
@@ -200,6 +212,23 @@ fn run_supports_project_root_execution() {
 }
 
 #[test]
+fn run_human_mode_renders_summary() {
+    Command::cargo_bin("kairos")
+        .expect("binary should build")
+        .arg("run")
+        .arg(fixture("examples/decision_bundle"))
+        .arg("--function")
+        .arg("classify")
+        .arg("--arg")
+        .arg("72")
+        .assert()
+        .success()
+        .stdout(contains("Kairos execution report"))
+        .stdout(contains("- module: demo.decision_bundle"))
+        .stdout(contains("classify => \"MEDIUM\""));
+}
+
+#[test]
 fn run_supports_stdlib_project_execution() {
     Command::cargo_bin("kairos")
         .expect("binary should build")
@@ -229,7 +258,7 @@ fn check_reports_structured_import_failure() {
     fs::create_dir_all(tempdir.path().join("src")).expect("source tree should create");
     fs::write(
         tempdir.path().join("kairos.toml"),
-        "[package]\nname = \"broken\"\nversion = \"0.2.0\"\nentry = \"src/main.kai\"\n",
+        "[package]\nname = \"broken\"\nversion = \"1.0.0\"\nentry = \"src/main.kai\"\n",
     )
     .expect("manifest should write");
     fs::write(
@@ -287,7 +316,8 @@ fn shell_supports_modules_and_run_commands() {
         .success()
         .stdout(contains("Loaded modules"))
         .stdout(contains("demo.decision_bundle.labels"))
-        .stdout(contains("\"MEDIUM\""));
+        .stdout(contains("Kairos execution report"))
+        .stdout(contains("classify => \"MEDIUM\""));
 }
 
 #[test]

@@ -3,6 +3,8 @@ name = "kairos-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Kairos AI-first programming language CLI and terminal-native toolchain"
+readme = "../../README.md"
 
 [[bin]]
 name = "kairos"
